@@ -1,0 +1,3 @@
+[submodule "evaluate/opencompass-0.2.4"]
+	path = evaluate/opencompass-0.2.4
+	url = https://github.com/open-compass/opencompass
