@@ -12,11 +12,12 @@ from math import asin, cos, radians, sin, sqrt
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.stats
-from pycitysim.map import Map
+from pycitydata.map import Map
 
 from config import MAP_DICT, MAP_PORT_DICT, MAP_CACHE_PATH, ROUTING_PATH, REGION_EXP
 from evaluate.city_eval.utils import load_map
 from .gen_utils import *
+
 
 def drawTwoBars(values1, values2, afterName="", path="."):
     

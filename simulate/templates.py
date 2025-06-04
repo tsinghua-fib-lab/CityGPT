@@ -3,7 +3,6 @@ import random
 random.seed(42)
 
 from config import EVAL_DATA, REGION_EXP
-# from train_task import task_template_urban
 from simulate.translate import Name
 LANGUAGE = Name(region_exp=REGION_EXP)
 
@@ -13,14 +12,6 @@ def task_template_urban(land_use):
         }
     category = landuse_dict.get(land_use, None)
     return category
-
-def task_template(land_use):
-    landuse_dict = {
-        "7":"Residential land", "5":"Commercial land", "6":"Industrial, mining and warehousing land", "10":"Transportation land", "8":"Public management and public service land", "12":"Others"
-        }
-    category = landuse_dict.get(land_use, None)
-    return category
-
 
 # address数据集
 # Template for poi_name2addr
@@ -68,136 +59,6 @@ def landuse_addr2aoi_choose(aoi_address, landuse_name):
             f"Hey, I'm currently in {aoi_address}. Can you help me locate a nearby {landuse_name} AOI?",
             f"Could you help me find a {landuse_name} AOI close to {aoi_address}?"
         ]
-    return random.choice(templates)
-
-# Template for type_addr2poi
-def type_addr2poi_choose(poi_address, l1_category_code, poi_category_L3, TEXT_ENGLISH):
-    if l1_category_code == '10':
-        templates = [
-            f"I'm in {poi_address}, could you kindly recommend a nearby restaurant that serves {poi_category_L3} cuisine?",
-
-            f"Hey, I'm in {poi_address} and I'm craving some {poi_category_L3} food! Can you suggest a good spot nearby? ",
-
-            f"Do you know of any {poi_category_L3} cuisine restaurants near {poi_address}?"
-        ]
-    elif l1_category_code == '13':
-        templates = [
-            f"I'm in {poi_address}, is there a store nearby that offers {poi_category_L3} product?",
-
-            f"Hey, I'm currently at {poi_address} and I'm looking for a place that offers {poi_category_L3} products. Any suggestions?",
-
-            f"I'm in the area of {poi_address} and I urgently need to find a store that carries {poi_category_L3}. Can you help me out?"
-        ]
-
-    elif l1_category_code == '14':
-        templates = [
-            f"I'm in {poi_address}, could you locate a place nearby that offers {poi_category_L3} service?",
-
-            f"Hey, I'm at {poi_address}. Can you find a {poi_category_L3} spot around here?",
-
-            f"I'm currently located at {poi_address}. Could you please provide information on the nearest establishment offering {poi_category_L3} services?"
-        ]
-
-    elif l1_category_code == '16':
-        templates = [
-            f"I'm in {poi_address}, is there a leisure spot nearby for {poi_category_L3} enjoyment?",
-
-            f"Hey, I'm in {poi_address}, know any cool spots around here for {poi_category_L3} fun?",
-
-            f"I am currently located in {poi_address} and I'm wondering if you could recommend a nearby location for {poi_category_L3} activities."
-        ]
-
-    elif l1_category_code == '18':
-        templates = [
-            f"I'm in {poi_address}, is there a facility nearby for {poi_category_L3} sport?",
-
-            f"Hi, I'm currently in {poi_address} and I'm looking for a place to practice {poi_category_L3}. Can you recommend a nearby facility?",
-
-            f"I'm visiting {poi_address} and I'm interested in {poi_category_L3}. Do you know of a facility around here?"
-        ]
-
-    elif l1_category_code == '19':
-        templates = [
-            f"I'm in {poi_address}, could you locate a place nearby that offers {poi_category_L3} service?",
-
-            f"Hey, I'm currently at {poi_address}. Can you locate a {poi_category_L3} place around here?",
-
-            f"I'm in {poi_address} and I'm looking for a {poi_category_L3} service. Can you help me with that?"
-        ]
-
-    elif l1_category_code == '20':
-        templates = [   
-            f"I'm in {poi_address}, is there a hospital nearby that provides {poi_category_L3} services?",
-
-            f"Could you inform me if there's a hospital nearby at {poi_address} that provides {poi_category_L3} services?",
-
-            f"Can you help me find a hospital close to {poi_address} that offers {poi_category_L3} services?"
-        ]
-
-    elif l1_category_code == '21':
-        templates = [
-            f"I'm in {poi_address}, could you recommend a hotel nearby that offers {poi_category_L3} accommodations?",
-
-            f"Hey, I'm staying in {poi_address} and I'm looking for a hotel with {poi_category_L3} facilities. Can you suggest some options?",
-
-            f"I'm heading to {poi_address} and I'm on the hunt for a hotel that offers {poi_category_L3} rooms. Can you help me out?"
-        ]
-
-    elif l1_category_code == '22':
-        templates = [
-            f"I'm in {poi_address}, is there a tourist attraction nearby that features {poi_category_L3}?",
-
-            f"Hey, I'm currently in {poi_address}. Know of any awesome {poi_category_L3} spots nearby?",
-
-            f"Hi, I'm visiting {poi_address} and I'm looking for a great {poi_category_L3} experience. Any recommendations?"
-        ]
-
-    elif l1_category_code == '23':
-        templates = [
-            f"I'm in {poi_address}, could you help me locate a cultural venue nearby that offers {poi_category_L3}?",
-
-            f"Hey, I'm at {poi_address} and I'm looking for a cultural spot that does {poi_category_L3}. Can you help me out?",
-
-            f"Hi, I'm in {poi_address} and I'm desperate to find a cultural venue that does {poi_category_L3}. Any ideas?"
-        ]
-
-    elif l1_category_code == '24':
-        templates = [
-            f"I'm in {poi_address}, is there an educational institution nearby that offers {poi_category_L3} programs?",
-
-            f"I'm in {poi_address} and I'm interested in pursuing {poi_category_L3} studies. Is there a good educational institutions nearby that offer such programs?",
-
-            f"Hi, I'm in {poi_address} and I need help finding an educational institution that offers {poi_category_L3} programs. Can you assist me?"
-        ]
-
-    elif l1_category_code == '25':
-        templates = [
-            f"I'm in {poi_address}, could you locate a financial institution nearby that offers {poi_category_L3} service?",
-
-            f"I'm in {poi_address} and I need to find a financial institution that offers {poi_category_L3}. Can you help me with that?",
-
-            f"Hi, I'm at {poi_address}. Do you know of any financial institutions nearby that offer {poi_category_L3}?"
-        ]
-
-    elif l1_category_code == '27':
-        templates = [
-            f"I'm in {poi_address}, could you identify a nearby infrastructure facility that includes {poi_category_L3} for me?",
-
-            f"I'm currently in {poi_address}. Do you know of any infrastructure facilities nearby that have {poi_category_L3}?",
-
-            f"Hi, I'm in {poi_address}. Could you please help me locate an infrastructure facility in the area that features {poi_category_L3}?"
-        ]
-
-    elif l1_category_code == '28':
-        templates = [
-            f"I'm in {poi_address}, could you recommend a real estate community nearby that includes {poi_category_L3}?",
-
-            f"Hi, I'm in {poi_address} and I'm searching for a real estate community with {poi_category_L3}. Do you know of any good options in the area?",
-
-            f"I'm in {poi_address} and I need help finding a real estate community that fits my needs. Specifically, I'm looking for a place with {poi_category_L3}. Can you assist me?"
-        ]
-    else:
-        return None
     return random.choice(templates)
 
 # Template for aoi2connected_road
@@ -522,6 +383,7 @@ def step_interests_text(interests_side):
     return random.choice(templates)
 
 # 附近POI信息描述
+# TODO 考虑增加关于方位的表述，将当前位置的POI按照分为4个象限，以丰富信息量，根据评测设计进行调整
 def describe_pois_via_text(map, pois_info, radius, has_category, detail_interest=False):
     """将当前位置所在的POI信息进行文字描述"""
     count = 0
@@ -587,62 +449,6 @@ def describe_pois_via_text(map, pois_info, radius, has_category, detail_interest
         return init_context + ", ".join(info)
 
 
-def describe_aois_via_text(map, aois_info, radius, has_category, detail_interest=False):
-    """将当前位置所在的AOI信息进行文字描述"""
-    count = 0
-    info = []
-    aoi_data = {"aois": []}
-
-    for key in aois_info:
-        if len(aois_info[key])==0:
-            continue
-        count += 1
-        aoi_descriptions = [] 
-        if EVAL_DATA == True:
-            if has_category:
-                aoi_descriptions = [
-                    {
-                        "name": LANGUAGE.get_aoi_name(aoi["id"], map),
-                        "category": task_template_urban(aoi["urban_land_use"])
-                    }
-                    for aoi in aois_info[key] if LANGUAGE.get_aoi_name(aoi["id"], map) is not None and task_template_urban(aoi["urban_land_use"]) is not None
-                ]
-            else:
-                aoi_descriptions = [LANGUAGE.get_aoi_name(aoi["id"], map) for aoi in aois_info[key] if LANGUAGE.get_aoi_name(aoi["id"], map) is not None and task_template_urban(aoi["urban_land_use"]) is not None]
-            aoi_data["aois"].extend(aoi_descriptions)
-
-            
-        else:
-            if detail_interest:
-                info_item = "There are {} {} AOIs, they are ".format(len(aois_info[key]), key)
-                if has_category:
-                    info_item += ";".join([LANGUAGE.get_aoi_name(aoi["id"], map) + "(" + task_template_urban(aoi["urban_land_use"]) +")" for aoi in aois_info[key] if LANGUAGE.get_aoi_name(aoi["id"], map) is not None and task_template_urban(aoi["urban_land_use"]) is not None])
-                else:
-                    info_item += ";".join([LANGUAGE.get_aoi_name(aoi["id"], map) for aoi in aois_info[key] if LANGUAGE.get_aoi_name(aoi["id"], map) is not None and task_template_urban(aoi["urban_land_use"]) is not None])
-                info.append(info_item)
-
-            else:
-                info_item = "{} {} AOIs".format(len(aois_info[key]), key)
-                info.append(info_item)
-
-    if EVAL_DATA == True:
-        return aoi_data
-    
-    if detail_interest:
-        init_context = "There are {} kinds of AOIs within a {}-meter radius.".format(count, radius)
-        if count > 0:
-            init_context += " Detailed information of them are as follows: "
-        info = [init_context] + info
-
-        return "\n".join(info)
-    else:
-        if count > 0:
-            init_context = "There are "
-        else:
-            init_context = "There are no AOIs within a {}-meter radius.".format(radius)
-        return init_context + ", ".join(info)
-
-    
 # 单步移动描述
 def describe_one_step_text(road_length, road_name, direction):
     """根据当前步骤描述移动"""

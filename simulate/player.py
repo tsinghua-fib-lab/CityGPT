@@ -10,19 +10,19 @@ from shapely.geometry import Point, Polygon
 from pycityproto.city.geo.v2.geo_pb2 import AoiPosition, Position, XYPosition, LongLatPosition
 import pycityproto.city.routing.v2.routing_pb2 as routing_pb
 import pycityproto.city.routing.v2.routing_service_pb2 as routing_service
-from pycitysim.map import Map
-from pycitysim.routing import RoutingClient
+from pycitydata.map import Map
+from citysim.routing import RoutingClient
 
 from config import EVAL_DATA, LANDMARK_DATA, VISION_DATA, REGION_BOUNDARY
 from simulate.utils import *
-from simulate.templates import *
+from simulate.templates import current_aoi_position, start_dest_text, junc_name_text, junc_walk_text, describe_pois_via_text,  describe_one_step_text, end_point_text, final_position, step_interests_text
 from simulate.translate import Name
 
 
 
 #####################
 # 下面一行失败，因此直接将相关代码copy过来
-# from pycitysim.utils.protobuf import parse
+# from citysim.utils.protobuf import parse
 from typing import Any, Awaitable, TypeVar
 from google.protobuf.message import Message
 from google.protobuf.json_format import MessageToDict
@@ -60,14 +60,8 @@ async def async_parse(res: Awaitable[T], dict_return: bool) -> dict[str, Any] | 
 
 def category_mapping():
     # 定义优先关注的POI类别
-    if OSM_REGION == True:
-        # for osm, it's aoi
-        category_supported = {"E3":"OtherNon-construction", "R":"Residential", "S4":"TrafficStation&Park", "A4":"Sports", "B31":"Entertainment", "B1":"CommercialFacilities", "U9":"OtherPublicFacilities", "A3":"Education","G1":"Park&GreenLand","B":"CommercialService&IndustryFacilities","B32":"Resort&Fitness","B13":"Restaurant&Bar","A9":"ReligiousFacilities","A5":"Hospital"}
-    else:
-        # for external data, it's poi
-        category_supported = {
-            "10":"Food", "13":"Shopping", "14":"LifeService", "16":"Entertainment", "18":"Sports&Exercise", "20":"MedicalService", "21":"Hotel", "22":"Traveling"
-            }
+    category_supported = {"leisure":"leisure", "amenity":"amenity", "building":"building"}
+
     return category_supported
 
 ######################
@@ -83,6 +77,7 @@ class Player:
         self._city_routing_client = city_routing_client
 
         self.init_position(init_aoi_id)
+        # TODO 似乎缺失一个POI position 判断，是否已经在postion里面
         self.time_cost = 0  # 总时间代价
         self.price_cost = 0 # 总成本代价
 
@@ -291,6 +286,12 @@ class Player:
         )
         return True
 
+    def do(self, function: str):
+        """
+        使用当前所在的POI的服务，返回成功与否
+        """
+        # TODO: 根据poi的种类判定其所能支持的服务，检查与传入的是否一致
+        ...
 
 
 class TextPlayer(Player):
@@ -350,11 +351,7 @@ class TextPlayer(Player):
         self.routing_road_list = []
         self.routing_junction_list = []
 
-        if OSM_REGION == True:
-            self.register_aoi = {}
-        else:
-            self.register_poi = {}
-
+        self.register_poi = {}
 
         self.nearby_params = nearby_params
 
@@ -467,8 +464,91 @@ class TextPlayer(Player):
             print(e)
             raise NotImplementedError
 
+
+    ##########################
+    # Action1: Search
+    # TODO 需要增加对POI类别的过滤，防止召回都是无用的POI
+    # 不同于virtual home，在city中通过定向搜索来建立环境认知
+    # 本质上，search是对手机端搜索功能的近似，但实现起来过于复杂，因此对其进行简化，限定为基于有限三级类目下的search
+    def search(self, category: str, shuffle=False, clean=False):
+        # 自我定位
+        pos = self.get_position()
+        center = (pos["xy_position"]["x"], pos["xy_position"]["y"])
+
+        # TODO 自然语言描述的类别转换为内部代码前缀，这里假设只搜1级类目，后续可以拓展
+        temp_cut = True # 临时处理3级类目的匹配问题，之后应该是精确搜索
+        category_prefix = self.get_category_prefix(category, level="L3", temp=temp_cut)
+
+        # 调用地图API进行搜索，TODO 搜索参数日后可以由LLM控制
+        radius=1000
+        for _ in range(3):
+            poi_list = super().search(
+                center=center,
+                radius=radius,
+                category_prefix=category_prefix,
+                limit=10
+                )
+            if len(poi_list) > 0:
+                break
+            radius=radius+500
+        poi_list = [p[0] for p in poi_list]
+        # print(poi_list)
+
+        # 增加随机扰动，以增加从搜索结果中得到核心目标的难度
+        if shuffle:
+            for shuf_id in random.sample(list(self.supported_poi_ids.keys()), 3):
+                if shuf_id[:-1] != category_prefix:
+                    poi_list_shuf = super().search(
+                        center=center,
+                        radius=1000,
+                        category_prefix=shuf_id[:-1],
+                        limit=3
+                    )
+                    if len(poi_list_shuf) > 0:
+                        poi_list = poi_list + [p[0] for p in poi_list_shuf]
+                        break
+            random.shuffle(poi_list)
+            poi_list = poi_list[:min(len(poi_list), 10)]
+        
+        if clean:
+            # 校验并清理POI返回值
+            poi_list_clean = []
+            for info in poi_list:
+                poi = info
+                # 不在实验范围内的去除
+                if not self.check_in_region(poi["shapely_lnglat"]):
+                    continue
+                poi_slim = {}
+                for item in poi:
+                    if item in ["id", "category", "aoi_id"]:
+                        poi_slim[item] = poi[item]
+                poi_slim["name"] = self.LANGUAGE.get_poi_name(poi["id"], self._city_map)
+                poi_list_clean.append(poi_slim)
+            # print(poi_list_clean)
+        else:
+            poi_list_clean = poi_list
+        
+        # 记录见过的POI并进行局部编码
+        self.update_pois_in_visiable_dict(poi_list_clean)
+        self.update_current_step_visiable_pois(poi_list_clean)
+
+        return poi_list_clean
+
+    # 将search返回的poi列表组织成周围环境的描述
+    def search_or_look_res_to_text(self, poi_list: list, action:str):
+        if len(poi_list) == 0:
+            return "There are no POIs nearby. Nothing happens."
+
+        # 这里只给出第三级类目代表的通用POI，就像virtual-home中的物品一样
+        info = "There are nearest {} POIs aroud you, they are:".format(len(poi_list))
+        info = info + ",".join(self.get_current_step_visiable_pois(action=action))
+
+        return info
+
     ###########################
-    # Action: Navigate
+    # Action 2: Navigate
+    # TODO 后续需要配合引入更多交通方式，并增加交通执行的细节
+    # 问题：由于实时获取信息，人工静态描述很难实现，需要引入实时反馈机制，可能可以依赖GPT4+全局信息来补充细节
     async def navigate(self, text_local_id):
         if text_local_id not in self.get_current_step_visiable_pois(action=Action.SEARCH.value):
             return None, None
@@ -538,39 +618,25 @@ class TextPlayer(Player):
     async def navigate_to_poi(self, id, mode="drive"):
 
         # 同一个aoi_id内的poi共享一样的导航路径信息，隐含AOI中包含哪些POI的信息
-        if OSM_REGION == True:
-            aoi_id = id
-            aoi_name = self.LANGUAGE.get_aoi_name(aoi_id, self._city_map)
-            start_aoi_name = self.LANGUAGE.get_aoi_name(self.init_aoi_id, self._city_map)
-            aoi_addr = self.LANGUAGE.get_aoi_address(aoi_id)
-            start_aoi_addr = self.LANGUAGE.get_aoi_address(self.init_aoi_id)
-            if start_aoi_addr == "":
-                start_aoi_addr_str = ""
-            else:
-                start_aoi_addr_str = "({})".format(start_aoi_addr)
-            if aoi_addr == "":
-                aoi_addr_str = ""
-            else:
-                aoi_addr_str = "({})".format(aoi_addr)
-        else:
-            poi_id = id
-            poi_info = self._city_map.get_poi(poi_id)
-            aoi_id = poi_info["aoi_id"]
-            poi_name = self.LANGUAGE.get_poi_name(poi_id, self._city_map)
-            start_poi_name = self.LANGUAGE.get_poi_name(self.init_poi_id, self._city_map)
-            poi_addr = self.LANGUAGE.get_poi_address(poi_id)
-            start_poi_addr = self.LANGUAGE.get_poi_address(self.init_poi_id)
-            if start_poi_addr == "":
-                start_poi_addr_str = ""
-            else:
-                start_poi_addr_str = "({})".format(start_poi_addr)
-            if poi_addr == "":
-                poi_addr_str = ""
-            else:
-                poi_addr_str = "({})".format(poi_addr)
 
-            if aoi_id is None:
-                return None, "POI is not belong to any AOI. " + NavigateStatus.NO_ROUTE
+        poi_id = id
+        poi_info = self._city_map.get_poi(poi_id)
+        aoi_id = poi_info["aoi_id"]
+        poi_name = self.LANGUAGE.get_poi_name(poi_id, self._city_map)
+        start_poi_name = self.LANGUAGE.get_poi_name(self.init_poi_id, self._city_map)
+        poi_addr = self.LANGUAGE.get_poi_address(poi_id, self._city_map)
+        start_poi_addr = self.LANGUAGE.get_poi_address(self.init_poi_id)
+        if start_poi_addr == "":
+            start_poi_addr_str = ""
+        else:
+            start_poi_addr_str = "({})".format(start_poi_addr)
+        if poi_addr == "":
+            poi_addr_str = ""
+        else:
+            poi_addr_str = "({})".format(poi_addr)
+
+        if aoi_id is None:
+            return None, "POI is not belong to any AOI. " + NavigateStatus.NO_ROUTE
 
         if mode == "drive":
             route = await self.get_driving_route(aoi_id)
@@ -597,10 +663,8 @@ class TextPlayer(Player):
         
         self.current_road_list = copy.deepcopy(road_list)
         self.routing_road_list = copy.deepcopy(road_list)
-        if OSM_REGION == True:
-            info_text = start_dest_text(start_aoi_name, start_aoi_addr_str, aoi_name, aoi_addr_str)
-        else:
-            info_text = start_dest_text(start_poi_name, start_poi_addr_str, poi_name, poi_addr_str)
+        # TODO 暂不考虑合并同名道路，后续再考虑，文本模板待更新
+        info_text = start_dest_text(start_poi_name, start_poi_addr_str, poi_name, poi_addr_str)
         infos = []
         files = []
         for i in range(len(road_list)):
@@ -784,11 +848,8 @@ class TextPlayer(Player):
         
         # 已经走完全部导航路径
         if len(self.current_road_list)==0:
-            if OSM_REGION == True:
-                aoi_id = id
-            else:
-                poi_id = id
-                aoi_id = self.get_aoi_of_poi(poi_id)
+            poi_id = id
+            aoi_id = self.get_aoi_of_poi(poi_id)
             # aoi不可得
             if aoi_id == None:
                 return (True, NavigateStatus.DES_NONE.value, [])
@@ -802,18 +863,11 @@ class TextPlayer(Player):
             else:
                 raise NotImplementedError
             if status:
-                if OSM_REGION == True:
-                    try:
-                        aoi_name = self.LANGUAGE.get_aoi_name(aoi_id, self._city_map)
-                    except Exception as e:
-                        aoi_name = str(aoi_id)+"-Unknown AOI name"
-                    return (True, aoi_name, [])
-                else:
-                    try:
-                        poi_name = self.LANGUAGE.get_poi_name(poi_id, self._city_map)
-                    except Exception as e:
-                        poi_name = str(poi_id)+"-Unknown POI name"
-                    return (True, poi_name, [])
+                try:
+                    poi_name = self.LANGUAGE.get_poi_name(poi_id, self._city_map)
+                except Exception as e:
+                    poi_name = str(poi_id)+"-Unknown POI name"
+                return (True, poi_name, [])
             else:
                 return (True, NavigateStatus.NAV_FAIL.value, [])
         
@@ -845,18 +899,12 @@ class TextPlayer(Player):
         category_supported = category_mapping()
         interest_info = {}
         for category_prefix in category_supported.keys():
-            if OSM_REGION == True:
-                interest_list = self._city_map.query_aois(center, radius, category_prefix, limit)
-            else:
-                interest_list = self._city_map.query_pois(center, radius, category_prefix, limit)
+            interest_list = self._city_map.query_pois(center, radius, category_prefix, limit)
             interest_list = [p[0] for p in interest_list if p[0]['name']]
             interest_info[category_supported[category_prefix]] = interest_list
         
         has_category = self.nearby_params["has_category"]>0
-        if OSM_REGION == False:
-            interest_text = describe_pois_via_text(self._city_map, interest_info, radius, has_category, detail_interest)
-        else:
-            interest_text = describe_aois_via_text(self._city_map, interest_info, radius, has_category, detail_interest)
+        interest_text = describe_pois_via_text(self._city_map, interest_info, radius, has_category, detail_interest)
 
         return (interest_info, interest_text)
 
@@ -981,15 +1029,9 @@ class TextPlayer(Player):
             self.script_object = script_object
 
             if script_action == Action.NAVIGATE.value:
-                if OSM_REGION == True:
-                    observation = await self.navigate_to_poi(id=self.register_aoi[script_object], mode="drive")
-                else:
-                    observation = await self.navigate_to_poi(id=self.register_poi[script_object], mode="drive")
+                observation = await self.navigate_to_poi(id=self.register_poi[script_object], mode="drive")
             elif script_action in [Action.WALK.value, Action.DRIVE.value]:
-                if OSM_REGION == True:
-                    observation = await self.move_step_by_step(id=self.register_aoi[script_object], mode="drive")
-                else: 
-                    observation = await self.move_step_by_step(id=self.register_poi[script_object], mode="drive")
+                observation = await self.move_step_by_step(id=self.register_poi[script_object], mode="drive")
             else:
                 raise NotImplementedError
             observation = self.get_observation(observation, run_mode, detail_interest)
@@ -1016,12 +1058,9 @@ class TextPlayer(Player):
                 interests, interests_text = self.get_nearby_interests(detail_interest)
                 obs["surroundings"] = interests
 
-                if OSM_REGION == False:
-                    # 获取当前位置的AOI信息
-                    current_aoi_id = self.position.aoi_position.aoi_id
-                    current_aoi_name = self.LANGUAGE.get_aoi_name(current_aoi_id, self._city_map)
-                else:
-                    current_aoi_name = ""
+                # 获取当前位置的AOI信息
+                current_aoi_id = self.position.aoi_position.aoi_id
+                current_aoi_name = self.LANGUAGE.get_aoi_name(current_aoi_id, self._city_map)
 
                 if self.routing_junction_list:
                     junction_name = self.routing_junction_list.pop(0)

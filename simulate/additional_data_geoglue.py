@@ -133,7 +133,7 @@ if __name__ == "__main__":
     
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_file", default="./examples/additional-wudaokou_small-mock-v9-v2.jsonl")
+    parser.add_argument("--output_file", default="./examples/spatial-v9.jsonl")
     parser.add_argument("--data_version", type=str, default=DATA_VERSION)
     args = parser.parse_args()
     main(args)

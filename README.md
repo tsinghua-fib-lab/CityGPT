@@ -2,33 +2,35 @@
 
 This repo is for CityGPT: Empowering Urban Spatial Cognition of Large Language Models
 
+## 📢 News
+
+🎉: (2025.05) CityGPT has been accepted to **KDD 2025 Research Track**.
+
 ## Introduction
 
-In this paper, we propose ***CityGPT***, a systematic framework designed to enhance LLMs' understanding of urban space and improving their ability to solve the related urban tasks by integrating a city-scale ‘world model’ into the model. Firstly, we construct a diverse instruction tuning dataset ***CityInstruction*** for injecting urban knowledge into LLMs and effectively boost their spatial reasoning capabilities. Using a combination of CityInstruction and open source general instruction data, we introduce a two-stage mixed fine-tuning method to train various LLMs (including ChatGLM3-6B, Llama3-8B, and Qwen1.5 series) to enhance their capabilities without compromising their general abilities. To validate the effectiveness of our proposed framework, we develop a comprehensive text-based benchmark ***CityEval*** for evaluating the performance of LLMs across a wide range of urban scenarios and geospatial tasks. Extensive evaluation results demonstrate that smaller LLMs trained with CityInstruction can achieve performance that is competitive with, and in some cases superior to, commercial LLMs when assessed using CityEval. Our work highlights the potential for integrating spatial knowledge into LLMs, thereby expanding their spatial cognition abilities and applicability to the real-world physical environments.
+In this paper, we propose ***CityGPT***, a systematic framework designed to enhance LLMs' understanding of urban space and improve their ability to solve the related urban tasks by integrating a city-scale \`world model' into the model. Firstly, we construct a diverse instruction tuning dataset, ***CityInstruction***, for injecting urban knowledge into LLMs and effectively boosting their spatial reasoning capabilities. Using a combination of CityInstruction and open source general instruction data, we introduce a novel and easy-to-use self-weighted fine-tuning method (***SWFT***) to train various LLMs (including ChatGLM3-6B, Llama3-8B, and Qwen2.5-7B) to enhance their urban spatial capabilities without compromising even improving their general abilities. Finally, to validate the effectiveness of our proposed framework, we develop a comprehensive text-based spatial benchmark ***CityEval*** for evaluating the performance of LLMs across a wide range of urban scenarios and geospatial tasks. Extensive evaluation results demonstrate that smaller LLMs trained with CityInstruction by SWFT method can achieve performance that is competitive with, and in some cases superior to, proprietary LLMs when assessed using CityEval. Our work highlights the potential for integrating spatial knowledge into LLMs, thereby expanding their spatial cognition abilities and applicability to the real-world physical environments.
 
 ## 🌍 Framework
 
-An overview of CityGPT, including CityInstruction, CityEval and tuning method. We can select any city/region around the world to automatically build new dataset and benchmark for it.
+An overview of CityGPT, including CityInstruction,SWFT and CityEval. We can select any city around the world to automatically build new dataset and benchmark for it.
 ![citygpt](./assets/framework-citygpt.png)
 
-### 🌆 Supported Regions
+### 🌆 Supported Cities
 
 Currently, the following regions are supported.
 
 
-| World    | Regions                 | Roads | PoIs |  AoIs  |
-| :------- | :---------------------- | :---: | :---: | :----: |
-| Asia     | Wudaokou@Beijing        |  148  | 13521 |  1584  |
-|          | Wangjing@Beijing        |  470  | 21963 |  6662  |
-|          | Yuyuantan@Beijing       |  898  | 50990 | 15324 |
-|          | Dahongmen@Beijing       |  358  | 38757 | 10694 |
-| Europe   | Paris                   | 4307 | 74303 | 118774 |
-| Americas | Lower Manhattan@NewYork |  522  | 11112 | 19541 |
+| World    | Regions | Roads |  PoIs  | AoIs |
+| :------- | :------ | :---: | :----: | :---: |
+| Asia     | Beijing | 37985 | 48874 | 13013 |
+| Europe   | London  | 17787 | 515713 | 27280 |
+| Europe   | Paris   | 2840 | 224589 | 4033 |
+| Americas | NewYork | 12680 | 567972 | 13773 |
 
 ## ⌨️ Codes Structure
 
-- simulate    # codes for constructing training dataset
-- train       # codes for fine-tuning models
+- simulate      # codes for constructing training dataset
+- LLAMA-Factory # modified codes for fine-tuning models with SWFT
 - evaluate      # evaluation codes
 - resource      # basic data of regions
 - config.py     # global variables in project
@@ -54,23 +56,19 @@ export SiliconFlow_API_KEY = ""        # For ChatGLM
 
 Besides, we use [vllm](https://github.com/vllm-project/vllm) for local LLM deployment.
 
-## 💡 Code Notes
-
-We provide two versions of the code. The branch "CityGPT" is the version used in our paper, while the branch "OSM\_all" is our latest version. The main difference between the two lies in the source of the map data. The former uses External data for the Beijing area and OSM data with only AoI information for other areas, whereas the latter uses OSM data containing full AoI/PoI information for all areas.
-
 ## Stage1: Constructing Training Data
 
 Please first set the relevant parameters according to the instructions in `config.py`.
 
-### Existing Dataset of 6 Regions
+### Existing Dataset of 4 Cities
 
-We provide the CityInstruction dataset for the existing 6 regions respectively. To access the dataset, please refer to [CityGPT-Data-huggingface](https://huggingface.co/datasets/Tianhui-Liu/CityGPT-Data).
+We provide the alpaca-format CityInstruction dataset for the existing 4 cities respectively. To access the dataset, please refer to [CityGPT-Data-huggingface](https://huggingface.co/datasets/Tianhui-Liu/CityGPT-Data).
 
-### Building a New Region Dataset
+### Building a New Region Dataset (optional)
 
 If you want to construct a dataset for new regions, please follow the instruction below:
 
-Please first navigate to the `CityWorldModel` directory by using the cd command: `cd CityWorldModel`
+Please first navigate to the root directory by using the cd command: `cd CityGPT`
 
 #### Basic Data Generation
 
@@ -99,7 +97,7 @@ In `config.py`, there are 4 parameters related to the CityWalk format. In the tr
 * `EVAL_DATA = False & LANDMARK_DATA = True`
 * `EVAL_DATA = False & LANDMARK_DATA = False & DETAIL_INTEREST = True`
 
-In the generation of training data CityReasoning and evaluation benchmark CityEval, the following configuration is also used. Please note that when generating this type of data, make sure to set `DATA_VERSION = "eval"` at the same time.
+In the generation of training data CityReasoning and evaluation benchmark CityEval, the following configuration is also used. Please note that when generating these types of data, make sure to set `DATA_VERSION = "eval"` at the same time.
 
 * `EVAL_DATA = True`
 
@@ -130,37 +128,43 @@ python -m simulate.reasoning_gen
 
 Once the above command is executed, you can find the generated training dataset in the `simulate/examples` folder.
 
-## Stage2: Fine-Tuning Models
+## Stage2: SWFT Models
 
-We use [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) to train the model.
+We have implemented training improvements based on the [LLaMA-Factory-v0.8.3](https://github.com/hiyouga/LLaMA-Factory) framework.
 
-### SFT Data Preparation
+### Fine-tuning Data Preparation (optional)
 
-We provide a script to convert CityInstruction into Alpaca format. You can set the data to be mixed for SFT in `train/scripts/data_process.py`, and then run the script.
+We provide a script to convert CityInstruction into Alpaca format. You can set the data to be mixed for SWFT in `train/scripts/data_process.py`, and then run the script.
 
 ```bash
-python -m train.scripts.data_process
+python -m LLAMA-Factory.scripts.data_process
 ```
 
-Here, we select influential data for the general benchmarks BBH and CityEval based on [LESS](https://github.com/princeton-nlp/LESS).
+### SWFT Methods
 
-### SFT Model
-
-We provide the SFT script. Please adjust the parameters in `examples/train_lora/lora_sft.yaml` as needed before executing the command below.
+After setting the parameters, you can use the following script to compute the perplexity (PPL) of the base model or the SFT model for each sample in the specified dataset.
 
 ```bash
-./train/run_sft.sh
+./LLAMA-Factory/scripts/cal_ppl.sh
+```
+
+It is worth noting that for datasets used in SWFT, each sample must have a `ratio` key indicating its weight. Additionally, the corresponding entry in the `LLAMA-Factory/data/dataset_info.json` file must also include `ratio` under the `columns` key. We have provided an example in that file.
+
+We provide the SWFT (Self-Weighted Fine-Tuning) script. Please adjust the parameters in `examples/train_full/full_sft_ds3.yaml` as needed before executing the command below.
+
+```bash
+./LLAMA-Factory/run_sft.sh
 ```
 
 ## Stage3: Running CityEval Evaluation
 
 ### Evaluation Data Preparation
 
-#### Existing Evaluation Tasks of 6 Regions
+#### Existing Evaluation Tasks of 4 Cities
 
-We provide the CityEval dataset for the existing 6 regions respectively. To access the dataset, please refer to [CityGPT-Data-huggingface](https://huggingface.co/datasets/Tianhui-Liu/CityGPT-Data).
+We provide the CityEval dataset for the existing 4 cities respectively. To access the dataset, please refer to [CityGPT-Data-huggingface](https://huggingface.co/datasets/Tianhui-Liu/CityGPT-Data).
 
-#### Building CityEval Benchmark for a New Region
+#### Building CityEval Benchmark for a New City (optional)
 
 If you want to expand the CityEval benchmark for a new area, please run the following command.
 
@@ -181,7 +185,7 @@ python -m evaluate.city_eval.run_eval \
     --model_name=GPT4o \
     --max_tokens=500 \
     --temperature=0 \
-    --city_eval_version=v2 \
+    --city_eval_version=v2.3 \
     --max_valid=50  \
     --workers=20 \
     --auto_multi \
@@ -211,10 +215,10 @@ python -m evaluate.agent.navigation.eval
 
 #### General Evaluation
 
-We provide a script for the general evaluation tool OpenCompass in `evaluate/scripts/run.sh`. You can move it to the submodule, modify the content, and run it.
+We provide a script for the general evaluation tool OpenCompass-v0.3.9 in `evaluate/scripts/run.sh`. You can move it to the submodule, modify the content, and run it.
 
 ```bash
-./evaluate/opencompass-0.2.4/run.sh
+./evaluate/opencompass-0.3.9/run.sh
 ```
 
 ## 🌟 Citation
@@ -222,13 +226,11 @@ We provide a script for the general evaluation tool OpenCompass in `evaluate/scr
 If you find this work helpful, please cite our paper.
 
 ```latex
-@article{Feng2024CityGPTEU,
-  title={CityGPT: Empowering Urban Spatial Cognition of Large Language Models},
-  author={Jie Feng, Tianhui Liu, Yuwei Du, Siqi Guo, Yuming Lin, and Yong Li},
-  journal={ArXiv},
-  year={2024},
-  volume={abs/2406.13948},
-  url={https://api.semanticscholar.org/CorpusID:270619725}
+@inproceedings{feng2025citygpt,
+title={CityGPT: Empowering Urban Spatial Cognition of Large Language Models},
+author={Jie Feng, Tianhui Liu, Yuwei Du, Siqi Guo, Yuming Lin, and Yong Li},
+booktitle = {Proceedings of the 31th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining},
+year = {2025}
 }
 ```
 
@@ -236,7 +238,6 @@ If you find this work helpful, please cite our paper.
 
 We appreciate the following GitHub repos a lot for their valuable code and efforts.
 
-- https://github.com/princeton-nlp/LESS for selecting influential data
 - https://github.com/hiyouga/LLaMA-Factory for fine-tuning model
 - https://github.com/THUDM/AgentTuning for multi-choice evaluation
 - https://github.com/xlwang233/LLM-Mob for urban mobility prediction

@@ -2,17 +2,21 @@ import os
 import json
 import requests
 import ast
+import time
 import argparse
 import signal
-import time
 import multiprocessing
 import pandas as pd
 import numpy as np
 from shapely import Point, Polygon, LineString
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
-from pycitysim.map import Map
 from simulate.utils import cal_angle, angle2dir, angle2dir_4, load_map
-from config import REGION_EXP, SERVING_IP, RESOURCE_PATH, MAP_CACHE_PATH, ROUTING_PATH, MAP_DICT, MAP_PORT_DICT, OSM_REGION
+from config import REGION_EXP, SERVING_IP, RESOURCE_PATH, MAP_CACHE_PATH, ROUTING_PATH, MAP_DICT, MAP_PORT_DICT
 
 def get_aoi_lane_direction(map, aoi_info, aoi_point):
     # 获取aoi相对lane的方向
@@ -54,22 +58,17 @@ def get_next_road_name_pre(map, lane_info):
             parent_id = junc_pre_lane_info['parent_id']
             if parent_id >= 300000000:
                 continue
-            if OSM_REGION == True:
-                pre_road_name = all_roads[parent_id]['name']
-            else:
-                pre_road_name = all_roads[parent_id]['external']['name']
+            pre_road_name = all_roads[parent_id]['name']
             if not pre_road_name: 
             # 如果road_name为空，命名为未知路名。
                 pre_road_name = "unknown road"
             pre_road_names.add(pre_road_name)
 
-    if OSM_REGION == True and center_points:
+    if center_points:
         center_points_array = np.array(center_points)
         mean_x = np.mean(center_points_array[:, 0])
         mean_y = np.mean(center_points_array[:, 1])
         junc_point = Point(mean_x, mean_y)
-    elif OSM_REGION == False:
-        junc_point = Point(junc_info['external']['center']['x'], junc_info['external']['center']['y'])
     else:
         return None
     
@@ -97,22 +96,17 @@ def get_next_road_name_suc(map, lane_info):
             parent_id = junc_suc_lane_info["parent_id"]
             if parent_id >= 300000000:
                 continue
-            if OSM_REGION == True:
-                suc_road_name = all_roads[parent_id]['name']
-            else:
-                suc_road_name = all_roads[parent_id]['external']['name']
+            suc_road_name = all_roads[parent_id]['name']
             if not suc_road_name: 
             # 如果road_name为空，命名为未知路名
                 suc_road_name = "unknown road"
             suc_road_names.add(suc_road_name)
 
-    if OSM_REGION == True and center_points:
+    if center_points:
         center_points_array = np.array(center_points)
         mean_x = np.mean(center_points_array[:, 0])
         mean_y = np.mean(center_points_array[:, 1])
         junc_point = Point(mean_x, mean_y)
-    elif OSM_REGION == False:
-        junc_point = Point(junc_info['external']['center']['x'], junc_info['external']['center']['y'])
     else:
         return None
     
@@ -133,10 +127,7 @@ def get_aoi_address(map, aoi_info):
         if lane_info['predecessors'] or lane_info['successors']:
             aoi_s = driving_position['s']
             road_info = all_roads[lane_info["parent_id"]]
-            if OSM_REGION == True:
-                road_name = road_info['name']
-            else:
-                road_name = road_info['external']['name']
+            road_name = road_info['name']
             if not road_name: 
             # 如果road_name为空，命名为unknown road
                 road_name = "unknown road"
@@ -203,7 +194,7 @@ def construct_aoi_address(map, aoi_file_path, min_resolution=50):
 
         
 
-def construct_poi_address(map, poi_file_path, aoi_id2name, min_resolution=50):
+def construct_poi_address(map, poi_file_path, min_resolution=50):
     all_pois = map.pois
     poi_df = pd.read_csv(poi_file_path)
     try:
@@ -217,8 +208,7 @@ def construct_poi_address(map, poi_file_path, aoi_id2name, min_resolution=50):
                 print("none")
                 continue
             aoi_s, road_name, junc_name, aoi_junc_direction, aoi_lane_direction = result
-            aoi_name = aoi_id2name.get(aoi_id, "")
-                
+            aoi_name = map.aois[aoi_id]['name']
             aoi_s_rounded = round(aoi_s / min_resolution) * min_resolution
             if aoi_s_rounded == 0:
                 aoi_s_final = f'within 50m'
@@ -234,6 +224,101 @@ def construct_poi_address(map, poi_file_path, aoi_id2name, min_resolution=50):
         poi_df.to_csv(poi_file_path, index=False, encoding='utf-8')
 
 
+@retry(wait=wait_random_exponential(min=3, max=60), stop=stop_after_attempt(10))
+def reverse_geocode_v2(city, lon, lat):
+    # https://nominatim.org/release-docs/develop/api/Reverse/
+    print(f"try to get location")
+    url = "http://{}:{}/reverse?format=jsonv2&lat={}&lon={}&zoom=18&addressdetails=1&accept-language=en-US".format(SERVING_IP, PORT, lat, lon)
+    response = requests.get(url)
+    location = json.loads(response.text)
+    try:
+        address = json.dumps(location["address"], ensure_ascii=False) if location else None
+        category = location.get("category", "") if location else ""
+    except:
+        address = ""
+        category = ""
+    return address, category
+
+
+def extract_address(address_json):
+    try:
+        data = json.loads(address_json)
+        exclude_keys = {"ISO3166-2-lvl4", "country_code"}
+        return ', '.join([value for key, value in data.items() if key not in exclude_keys])
+    except json.JSONDecodeError:
+        return "Invalid JSON" 
+    
+
+def geocode_extract_aoi(city, aoi_id, land_use, coords, aoi_name, Address, lng, lat):
+    try:
+        addr, cate = reverse_geocode_v2(city, lng, lat)
+    except:
+        addr = ""
+        cate = "" 
+    
+    return aoi_id, land_use, coords, aoi_name, Address, addr, cate
+
+
+
+def process_map_aoi(city, aoi_file):
+    coor_list = []
+    city_res = []
+    df = pd.read_csv(aoi_file)
+    for index, row in df.iterrows():
+        aoi_id = row['aoi_id']
+        aoi_name = row['aoi_name']
+        land_use = row['land_use']
+        coords = row['coords']
+        Address = row['Address']
+        lng,lat = ast.literal_eval(coords)[0]
+        coor_list.append((city, aoi_id, land_use, coords, aoi_name, Address, lng, lat))
+
+    with multiprocessing.Pool(WORKERS) as pool:
+        results = pool.starmap(geocode_extract_aoi, coor_list)
+    for res in results:
+        city_res.append(res)
+    
+    columns = ['aoi_id', 'aoi_name', 'land_use', 'coords', 'Address', 'address_osm', 'category_osm']
+    res_df = pd.DataFrame(city_res, columns=columns)
+    res_df['address_osm'] = res_df['address_osm'].apply(extract_address)
+
+    res_df.to_csv(aoi_file, index=False)
+
+
+def geocode_extract_poi(city, poi_id, category, name, Address, lng, lat):
+    try:
+        addr, cate = reverse_geocode_v2(city, lng, lat)
+    except:
+        addr = ""
+        cate = "" 
+    
+    return poi_id, category, name, Address, addr, cate
+
+
+def process_map_poi(city, poi_file, city_map):
+    coor_list = []
+    city_res = []
+    df = pd.read_csv(poi_file)
+    for index, row in df.iterrows():
+        poi_id = row['poi_id']
+        category = row['category']
+        name = row['name']
+        Address = row['Address']
+        poi_info = city_map.get_poi(poi_id)
+        lng, lat = poi_info['shapely_lnglat'].x, poi_info['shapely_lnglat'].y
+        coor_list.append((city, poi_id, category, name, Address, lng, lat))
+
+    with multiprocessing.Pool(WORKERS) as pool:
+        results = pool.starmap(geocode_extract_poi, coor_list)
+    for res in results:
+        city_res.append(res)
+    
+    columns = ['poi_id', 'category', 'name', 'Address', 'address_osm', 'category_osm']
+    res_df = pd.DataFrame(city_res, columns=columns)
+    res_df['address_osm'] = res_df['address_osm'].apply(extract_address)
+
+    # 保存结果到 CSV 文件
+    res_df.to_csv(poi_file, index=False)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -251,15 +336,17 @@ if __name__ == "__main__":
     ### 自行构建地址系统
     # min_resolution参数为道路长度最小分辨率
     min_resolution=50
-
+    poi_file = os.path.join(RESOURCE_PATH, "{}_pois.csv".format(REGION_EXP))
+    construct_poi_address(m, poi_file, min_resolution)
     aoi_file = os.path.join(RESOURCE_PATH, "{}_aois.csv".format(REGION_EXP))
-    aoi_data = pd.read_csv(aoi_file)
-    aoi_id2name = pd.Series(aoi_data.aoi_name.values, index=aoi_data.aoi_id).to_dict()
-    if OSM_REGION == False:
-        poi_file = os.path.join(RESOURCE_PATH, "{}_pois.csv".format(REGION_EXP))
-        construct_poi_address(m, poi_file, aoi_id2name, min_resolution)
-    
     construct_aoi_address(m, aoi_file, min_resolution)
+    print("finish constructing own address system")
+    ### 使用OSM地址系统
+    print("start geocoding")
+    WORKERS = 20
+    PORT = 18081
+    process_map_poi(REGION_EXP, poi_file, m)
+    process_map_aoi(REGION_EXP, aoi_file)
 
     print("send signal")
     process.send_signal(sig=signal.SIGTERM)

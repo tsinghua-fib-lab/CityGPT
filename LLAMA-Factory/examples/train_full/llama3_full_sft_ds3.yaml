@@ -1,0 +1,43 @@
+### model
+model_name_or_path: /data1/citygpt/init_ckpt/llama3/Meta-Llama-3-8B-Instruct
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json
+
+### dataset
+dataset: citygpt-llama3-Paris-v24.6-SF-v2.3-data-ppl
+dataset_dir: /data4/liutianhui/LLAMA-Factory/data/
+template: llama3
+cutoff_len: 4096
+max_samples: 4010608000000000000
+overwrite_cache: true
+preprocessing_num_workers: 64
+
+### output
+output_dir: /data4/liutianhui/model_zoo/citygpt-llama3-Paris-v24.6-SF-v2.3-loss-un-pk-20250226/
+logging_steps: 10
+save_steps: 10000000000
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 1.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+packing: false
+neat_packing: false
+# flash_attn: disabled
+
+### eval
+val_size: 0.1
+per_device_eval_batch_size: 1
+eval_strategy: "no"
+eval_steps: 500

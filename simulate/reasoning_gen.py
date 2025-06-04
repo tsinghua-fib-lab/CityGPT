@@ -8,16 +8,23 @@ from shapely.geometry import Polygon
 
 import numpy as np
 import pandas as pd
-from pycitysim.map import Map
 
-from config import RESOURCE_PATH, REGION_EXP, STEP, MIN_ROAD_LENGTH, MAP_DICT, MAP_PORT_DICT, TRAIN_DATA_PATH, MAP_CACHE_PATH, ROUTING_PATH, DATA_VERSION, DIS2CORNER, OSM_REGION
-from evaluate.city_eval.utils import dir_all_dis, compute_length, calcu_azimuth, angle2dir, angle2dir_4, secondary_dir_to_primary_dirs, primary_directions, secondary_directions, EW, NS, dir_map, dir_map2
+from config import RESOURCE_PATH, REGION_EXP, STEP, MIN_ROAD_LENGTH, MAP_DICT, MAP_PORT_DICT, TRAIN_DATA_PATH, MAP_CACHE_PATH, ROUTING_PATH, DATA_VERSION, DIS2CORNER
+from evaluate.city_eval.utils import dir_all_dis, compute_length, calcu_azimuth, angle2dir, angle2dir_4, secondary_dir_to_primary_dirs, primary_directions, secondary_directions, EW, NS, dir_map, dir_map2, get_landuse_dict, task_files_adaption
+from simulate.player import category_mapping
 from simulate.utils import load_map, compute_length_template
 from simulate.address_system import get_aoi_address
 
 
 #######POI2RD_DIS
 def get_poi2rd_dis(map, diags, diag_routes, name_adr_poi):
+    # shuffle the order of dialogs
+    combined = list(zip(diags, diag_routes))
+    random.shuffle(combined)
+    diags, diag_routes = zip(*combined)
+    diags = list(diags)
+    diag_routes = list(diag_routes)
+
     poi2rd_dis = []
     index_dis = 0
     for cnt, diag in enumerate(diags):
@@ -32,7 +39,7 @@ def get_poi2rd_dis(map, diags, diag_routes, name_adr_poi):
         routes = content['routes']
         dir_dis_fin = dir_all_dis(routes, secondary_directions, primary_directions,secondary_dir_to_primary_dirs)[0]
         segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
         NSEW = {'NS': [], 'EW': []}
         for dir, dis in dir_dis_fin:
             if dir in NS:
@@ -50,7 +57,7 @@ def get_poi2rd_dis(map, diags, diag_routes, name_adr_poi):
                 EW_dis.append((dir, dis))
         st2 = ("Step 2: Calculate distances you move on south-north and east-west.\
             Consider distances you move southward and northward,\
-            you move a total of {}-{}={} meters south-north.Consider distances you move westward and eastward,\
+            you move a total of {}-{}={} meters south-north. Consider distances you move westward and eastward,\
             you move a total of {}-{}={} meters east-west.").format(
             max(NS_dis, key=lambda x: x[1])[1], min(NS_dis, key=lambda x: x[1])[1], np.abs(NS_dis[0][1] - NS_dis[1][1]),
             max(EW_dis, key=lambda x: x[1])[1], min(EW_dis, key=lambda x: x[1])[1], np.abs(EW_dis[0][1] - EW_dis[1][1])
@@ -66,7 +73,7 @@ def get_poi2rd_dis(map, diags, diag_routes, name_adr_poi):
                 print("No address for start AOI!")
                 continue
             aoi_s, rd_name, junc_name, aoi_junc_direction, rd_belong_dir = result
-            routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ".Finally you arrive at {}.{} is on {}.".format(end_poi, start_poi, rd_name)
+            routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ". Finally you arrive at {}.{} is on {}.".format(end_poi, start_poi, rd_name)
             if rd_belong_dir in EW:
                 distance = np.abs(NSEW['NS'][0] - NSEW['NS'][1])
             elif rd_belong_dir in NS:
@@ -77,16 +84,15 @@ def get_poi2rd_dis(map, diags, diag_routes, name_adr_poi):
             random.shuffle(distances)
             letters = ['A', 'B', 'C', 'D']
             choices = ['{}.{}'.format(x, y) for x, y in zip(letters, distances)]
-            st3 = "Step3: Find the direction of {}.From the address of POI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
+            st3 = "Step3: Find the direction of {}. From the address of POI on {}, which is {}, we can find the direction to road is {}, which means {} runs {}.".format(
                 rd_name, rd_name, start_poi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
             res_dis = dict(zip(["A", "B", "C", "D"], distances))
-            res_dis_prompt = dict(zip(["A", "B", "C", "D"], distances))
             for k in res_dis:
                 if res_dis[k] == distance:
                     label = k
-            st4 = "Step4: Answer:{}.Calculate the distance between {} and {}.If the road runs south-north, then the answer is the distance you move east-west in step 3.\
-            If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {}，\
-            so the final answer is the distance you move {} in step 3,which is {} meters.".format(label, end_poi, rd_name,
+            st4 = "Step4: Answer:{}. Calculate the distance between {} and {}. If the road runs south-north, then the answer is the distance you move east-west in step 3.\
+            If the road runs east-west, then the answer is the distance you move south-north in step 3. Because {} runs {},\
+            so the final answer is the distance you move {} in step 3, which is {} meters.".format(label, end_poi, rd_name,
                                                                                                 rd_name,
                                                                                                 dir_map[rd_belong_dir],
                                                                                                 dir_map2[dir_map[
@@ -116,147 +122,34 @@ def get_poi2rd_dis(map, diags, diag_routes, name_adr_poi):
             random.shuffle(distances)
             letters = ['A', 'B', 'C', 'D']
             choices = ['{}.{}'.format(x, y) for x, y in zip(letters, distances)]
-            st3 = "Step3: Find the direction of {}.From the address of POI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
-                rd_name, rd_name, end_poi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
+            st3 = "Step3: Find the direction of {}. From the address of POI on {}, which is {}, we can find the direction to corner is {}, which means {} runs {}.".format(
+                rd_name, rd_name, start_poi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
             res_dis = dict(zip(["A", "B", "C", "D"], distances))
             res_dis_prompt = dict(zip(["A", "B", "C", "D"], distances))
             for k in res_dis:
                 if res_dis[k] == distance:
                     label = k
-            st4 = "Step4: Answer:{}.Calculate the distance between {} and {}.If the road runs south-north, then the answer is the distance you move east-west in step 3.".format(label, start_poi, rd_name) + "If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {},".format(rd_name, dir_map[rd_belong_dir]) +"so the final answer is the distance you move {} in step 3,which is {} meters.".format(dir_map2[dir_map[rd_belong_dir]], distance)
+            st4 = "Step4: Answer:{}.Calculate the distance between {} and {}. If the road runs south-north, then the answer is the distance you move east-west in step 3.".format(label, start_poi, rd_name) + "If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {},".format(rd_name, dir_map[rd_belong_dir]) +" so the final answer is the distance you move {} in step 3, which is {} meters.".format(dir_map2[dir_map[rd_belong_dir]], distance)
             question = "What is the distance between {} and {}?".format(start_poi, rd_name)
             dialog['diag'].append(
                 {'role': 'user', 'content': routine + question + '\n'.join(choices) + "\nLet's think step by step.\n"})
             dialog['diag'].append({'role': 'assistant', 'content': st1 + st2 + st3 + st4})
             poi2rd_dis.append(dialog)
             index_dis += 1
+        if index_dis == 1000:
+            break
     return poi2rd_dis
-
-def get_aoi2rd_dis_osm(map, diags, diag_routes, name_adr_aoi):
-    aoi2rd_dis = []
-    index_dis = 0
-    for cnt, diag in enumerate(diags):
-        dialog = {'task': 'cityreasoning-{}'.format(REGION_EXP), 'id': 'aoi2rd_dis' + str(index_dis), 'diag': []}
-        content = json.loads(diag[1]["content"])
-        start_aoi_name = content['start_name']
-        start_aoi_addr = content['start_addr']
-        start_aoi = "{}{}".format(start_aoi_name, start_aoi_addr)
-        end_aoi_name = content['dest_name']
-        end_aoi_addr = content['dest_addr']
-        end_aoi = "{}{}".format(end_aoi_name, end_aoi_addr)
-        routes = content['routes']
-        dir_dis_fin = dir_all_dis(routes, secondary_directions, primary_directions,secondary_dir_to_primary_dirs)[0]
-        segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
-        NSEW = {'NS': [], 'EW': []}
-        for dir, dis in dir_dis_fin:
-            if dir in NS:
-                NSEW['NS'].append(dis)
-            elif dir in EW:
-                NSEW['EW'].append(dis)
-            else:
-                print(dir)
-        NS_dis = []
-        EW_dis = []
-        for dir, dis in dir_dis_fin:
-            if dir in NS:
-                NS_dis.append((dir, dis))
-            elif dir in EW:
-                EW_dis.append((dir, dis))
-
-        st2 = ("Step 2: Calculate distances you move on south-north and east-west.\
-            Consider distances you move southward and northward,\
-            you move a total of {}-{}={} meters south-north.Consider distances you move westward and eastward,\
-            you move a total of {}-{}={} meters east-west.").format(
-            max(NS_dis, key=lambda x: x[1])[1], min(NS_dis, key=lambda x: x[1])[1], np.abs(NS_dis[0][1] - NS_dis[1][1]),
-            max(EW_dis, key=lambda x: x[1])[1], min(EW_dis, key=lambda x: x[1])[1], np.abs(EW_dis[0][1] - EW_dis[1][1])
-        )
-        if end_aoi not in name_adr_aoi and start_aoi not in name_adr_aoi:
-            print("Both start and end AOI are not in the map!")
-            continue
-        if start_aoi in name_adr_aoi:  # 使用起点aoi所在道路，终点aoi
-            start_aoi_id = name_adr_aoi[start_aoi]['aoi_id']
-            start_aoi_info = map.aois[start_aoi_id]
-            result = get_aoi_address(map, start_aoi_info)
-            if result is None:
-                print("No address for start AOI!")
-                continue
-            aoi_s, rd_name, junc_name, aoi_junc_direction, rd_belong_dir = result
-            routine = 'After starting from {}, you '.format(start_aoi) + ", ".join(diag_routes[cnt]) + ".Finally you arrive at {}.{} is on {}.".format(end_aoi, start_aoi, rd_name)
-            if rd_belong_dir in EW:
-                distance = np.abs(NSEW['NS'][0] - NSEW['NS'][1])
-            elif rd_belong_dir in NS:
-                distance = np.abs(NSEW['EW'][0] - NSEW['EW'][1])
-            if distance < DIS2CORNER:
-                continue
-            distances = [int(distance / 2), int(distance * 2), int(distance + 500), distance]
-            random.shuffle(distances)
-            letters = ['A', 'B', 'C', 'D']
-            choices = ['{}.{}'.format(x, y) for x, y in zip(letters, distances)]
-            st3 = "Step3: Find the direction of {}.From the address of AOI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
-                rd_name, rd_name, start_aoi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
-            res_dis = dict(zip(["A", "B", "C", "D"], distances))
-            res_dis_prompt = dict(zip(["A", "B", "C", "D"], distances))
-            for k in res_dis:
-                if res_dis[k] == distance:
-                    label = k  
-            st4 = "Step4: Answer:{}.Calculate the distance between {} and {}.If the road runs south-north, then the answer is the distance you move east-west in step 3.\
-            If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {}，\
-            so the final answer is the distance you move {} in step 3,which is {} meters.".format(label, end_aoi, rd_name,
-                                                                                                rd_name,
-                                                                                                dir_map[rd_belong_dir],
-                                                                                                dir_map2[dir_map[
-                                                                                                    rd_belong_dir]],
-                                                                                                distance)
-            question = "What is the distance between {} and {}?".format(end_aoi, rd_name)
-            dialog['diag'].append(
-                {'role': 'user', 'content': routine + question + '\n'.join(choices) + "\nLet's think step by step.\n"})
-            dialog['diag'].append({'role': 'assistant', 'content': st1 + st2 + st3 + st4})
-            aoi2rd_dis.append(dialog)
-            index_dis += 1
-        elif end_aoi in name_adr_aoi:   # 使用终点AOI所在道路，起点AOI
-            end_aoi_addr = name_adr_aoi[end_aoi]['aoi_id']
-            end_aoi_info = map.aois[end_aoi_addr]
-            result = get_aoi_address(map, end_aoi_info)
-            if result is None:
-                continue
-            aoi_e, rd_name, junc_name, aoi_junc_direction, rd_belong_dir = result
-            routine = 'After starting from {}, you '.format(start_aoi) + ", ".join(diag_routes[cnt]) + ".Finally you arrive at {}.{} is on {}.".format(end_aoi, end_aoi, rd_name)
-            if rd_belong_dir in EW:
-                distance = np.abs(NSEW['NS'][0] - NSEW['NS'][1])
-            elif rd_belong_dir in NS:
-                distance = np.abs(NSEW['EW'][0] - NSEW['EW'][1])
-            if distance < DIS2CORNER:
-                continue
-            distances = [str(int(distance / 2)), str(int(distance * 2)), str(int(distance + 500)), str(int(distance))]
-            random.shuffle(distances)
-            letters = ['A', 'B', 'C', 'D']
-            choices = ['{}.{}'.format(x, y) for x, y in zip(letters, distances)]
-            st3 = "Step3: Find the direction of {}.From the address of AOI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
-                rd_name, rd_name, end_aoi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
-            res_dis = dict(zip(["A", "B", "C", "D"], distances))
-            res_dis_prompt = dict(zip(["A", "B", "C", "D"], distances))
-            for k in res_dis:
-                if res_dis[k] == str(int(distance)):
-                    label = k
-            
-            st4 = "Step4: Answer:{}.Calculate the distance between {} and {}.If the road runs south-north, then the answer is the distance you move east-west in step 3.\
-            If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {}，\
-            so the final answer is the distance you move {} in step 3,which is {} meters.".format(
-                label, start_aoi, rd_name,rd_name, dir_map[rd_belong_dir],dir_map2[dir_map[rd_belong_dir]], distance)
-                
-            question = "What is the distance between {} and {}?".format(start_aoi, rd_name)
-            dialog['diag'].append(
-                {'role': 'user', 'content': routine + question + '\n'.join(choices) + "\nLet's think step by step.\n"})
-            dialog['diag'].append({'role': 'assistant', 'content': st1 + st2 + st3 + st4})
-            aoi2rd_dis.append(dialog)
-            index_dis += 1
-    return aoi2rd_dis
 
 
 #######AOI2RD_DIS,起终点有一个有AOI名字即可。起点有AOI名字，则使用终点所在道路，反之亦然
-
 def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
+    # shuffle the order of dialogs
+    combined = list(zip(diags, diag_routes))
+    random.shuffle(combined)
+    diags, diag_routes = zip(*combined)
+    diags = list(diags)
+    diag_routes = list(diag_routes)
+
     aoi2rd_dis = []
     index_dis = 0
     for cnt, diag in enumerate(diags):
@@ -268,7 +161,7 @@ def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
         routes = content['routes']
         dir_dis_fin = dir_all_dis(routes, secondary_directions, primary_directions, secondary_dir_to_primary_dirs)[0]
         segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
 
         # 提取"destination"和"by"之间的信息
         end_poi_name = content['dest_name']
@@ -291,7 +184,7 @@ def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
                 EW_dis.append((dir, dis))
         st2 = ("Step 2: Calculate distances you move on south-north and east-west.\
                 Consider distances you move southward and northward,\
-            you move a total of {}-{}={} meters south-north.Consider distances you move westward and eastward,\
+            you move a total of {}-{}={} meters south-north. Consider distances you move westward and eastward,\
             you move a total of {}-{}={} meters east-west.").format(
             max(NS_dis, key=lambda x: x[1])[1], min(NS_dis, key=lambda x: x[1])[1], np.abs(NS_dis[0][1] - NS_dis[1][1]),
             max(EW_dis, key=lambda x: x[1])[1], min(EW_dis, key=lambda x: x[1])[1], np.abs(EW_dis[0][1] - EW_dis[1][1])
@@ -301,10 +194,11 @@ def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
         aoi_id, aoi_id2 = name_adr_poi[start_poi]['aoi_id'], name_adr_poi[end_poi]['aoi_id']
         if aoi_id not in aoi_dict and aoi_id2 not in aoi_dict:
             continue
-        if aoi_id not in aoi_dict:  # 起点AOI无名字，使用起点AOI所在道路，终点AOI名字
+        if aoi_id2 in aoi_dict:  # 终点AOI在dict中，使用起点AOI所在道路，终点AOI名字
             aoi_info = map.aois[aoi_id]
             result = get_aoi_address(map, aoi_info)
             if result is None:
+                print("No address for start AOI!")
                 continue
             aoi_s, rd_name, junc_name, aoi_junc_direction, rd_belong_dir = result
             aoi_name = aoi_dict[aoi_id2]['name']
@@ -320,16 +214,16 @@ def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
                 continue
             distances = [str(int(distance / 2)), str(int(distance * 2)), str(int(distance + 500)), str(int(distance))]
             choices = ['{}.{}'.format(x, y) for x, y in zip(['A', 'B', 'C', 'D'], distances)]
-            st3 = "Step3: Find the direction of {}.From the address of POI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
+            st3 = "Step3: Find the direction of {}. From the address of POI on {}, which is {}, we can find the direction to corner is {}, which means {} runs {}.".format(
                 rd_name, rd_name, start_poi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
             res_dis = dict(zip(["A", "B", "C", "D"], distances))
             for k in res_dis:
                 if res_dis[k] == str(int(distance)):
                     label = k
-            st4 = "Step4: Calculate the distance between {} and {}.If the road runs south-north, then the answer is the distance you move east-west in step 3.\
-            If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {}，\
-            so the final answer is the distance you move {} in step 3,which is {} meters.\
-            Because {} is in {},so the answer is {}.".format(end_poi, rd_name, rd_name, dir_map[rd_belong_dir],
+            st4 = "Step4: Calculate the distance between {} and {}. If the road runs south-north, then the answer is the distance you move east-west in step 3.\
+            If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {},\
+            so the final answer is the distance you move {} in step 3, which is {} meters.\
+            Because {} is in {}, so the answer is {}.".format(end_poi, rd_name, rd_name, dir_map[rd_belong_dir],
                                                             dir_map2[dir_map[rd_belong_dir]], distance, end_poi,
                                                             aoi_name_addr, distance)
             question = "What is the distance between {} and {}?".format(aoi_name_addr, rd_name)
@@ -339,7 +233,7 @@ def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
             aoi2rd_dis.append(dialog)
             index_dis += 1
 
-        if aoi_id2 not in aoi_dict:  # 终点AOI无名字，使用终点AOI所在道路
+        elif aoi_id in aoi_dict:  # 起点AOI在dict中，使用终点AOI所在道路
             aoi_info2 = map.aois[aoi_id2]
             result2 = get_aoi_address(map, aoi_info2)
             if result2 is None:
@@ -359,16 +253,16 @@ def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
             distances = [str(int(distance / 2)), str(int(distance * 2)), str(int(distance + 500)), str(int(distance))]
             letters = ['A', 'B', 'C', 'D']
             choices = ['{}.{}'.format(x, y) for x, y in zip(letters, distances)]
-            st3 = "Step3: Find the direction of {}.From the address of POI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
+            st3 = "Step3: Find the direction of {}. From the address of POI on {}, which is {}, we can find the direction to corner is {}, which means {} runs {}.".format(
                 rd_name, rd_name, start_poi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
             res_dis = dict(zip(["A", "B", "C", "D"], distances))
             for k in res_dis:
                 if res_dis[k] == str(int(distance)):
                     label = k
-            st4 = "Step4: Calculate the distance between {} and {}.If the road runs south-north, then the answer is the distance you move east-west in step 3.\
-            If the road runs east-west, then the answer is the distance you move south-north in step 3.Because {} runs {}，\
-            so the final answer is the distance you move {} in step 3,which is {} meters.\
-            Because {} is in {},so the answer is {}.".format(aoi_name_addr, rd_name, rd_name, dir_map[rd_belong_dir],
+            st4 = "Step4: Calculate the distance between {} and {}. If the road runs south-north, then the answer is the distance you move east-west in step 3.\
+            If the road runs east-west, then the answer is the distance you move south-north in step 3. Because {} runs {},\
+            so the final answer is the distance you move {} in step 3, which is {} meters.\
+            Because {} is in {}, so the answer is {}.".format(aoi_name_addr, rd_name, rd_name, dir_map[rd_belong_dir],
                                                             dir_map2[dir_map[rd_belong_dir]], distance, start_poi,
                                                             aoi_name_addr, distance)
             question = "What is the distance between {} and {}?".format(aoi_name_addr, rd_name)
@@ -377,12 +271,20 @@ def get_aoi2rd_dis(map, diags, diag_routes, aoi_dict, name_adr_poi):
             dialog['diag'].append({'role': 'assistant', 'content': "Answer:{}\n".format(label) + st1 + st2 + st3 + st4})
             aoi2rd_dis.append(dialog)
             index_dis += 1
+        if index_dis == 1000:
+            break
     return aoi2rd_dis
 
 
 # POI2AOI DIS&DIR，起终点有一个有AOI名字即可
-
 def get_poi2aoi(diags, diag_routes, aoi_dict, name_adr_poi):
+    # shuffle the order of dialogs
+    combined = list(zip(diags, diag_routes))
+    random.shuffle(combined)
+    diags, diag_routes = zip(*combined)
+    diags = list(diags)
+    diag_routes = list(diag_routes)
+
     poi2aoi_dis = []
     poi2aoi_dir = []
     index_dis = 0
@@ -408,9 +310,9 @@ def get_poi2aoi(diags, diag_routes, aoi_dict, name_adr_poi):
         routes = content['routes']
         dir_dis_fin = dir_all_dis(routes, secondary_directions, primary_directions, secondary_dir_to_primary_dirs)[0]
         segment = ','.join([str(item) for item in dir_dis_fin])
-        st1_dir = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1_dir = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction:\n" + segment + '\n'
         st1_dis = "Step 1: Find the distance walking along the road of each segment of the journey:\n" + distance_strs
-        st2_dis = "Step 2:Add all distances above together to get the total distance:\n" + '+'.join(
+        st2_dis = "Step 2: Add all distances above together to get the total distance:\n" + '+'.join(
             distances_in_route) + "={}".format(distance) + ".So the answer is {}m.\n".format(distance)
         ########方向问题的推理步骤
         NSEW = {'NS': [], 'EW': []}
@@ -440,14 +342,14 @@ def get_poi2aoi(diags, diag_routes, aoi_dict, name_adr_poi):
         random.shuffle(directions)
         st2_dir = "Step 2: Calculate distances you move on south-north and east-west.\
             Consider distances you move southward and northward,\
-            you move a total of {}-{}={} meters towards {}.Consider distances you move westward and eastward,\
+            you move a total of {}-{}={} meters towards {}. Consider distances you move westward and eastward,\
             you move a total of {}-{}={} meters towards {}.".format(
             max(NS_dis, key=lambda x: x[1])[1], min(NS_dis, key=lambda x: x[1])[1], np.abs(NS_dis[0][1] - NS_dis[1][1]),
             NS_dir,
             max(EW_dis, key=lambda x: x[1])[1], min(EW_dis, key=lambda x: x[1])[1], np.abs(EW_dis[0][1] - EW_dis[1][1]),
             EW_dir
         )
-        st3_dir = "Step 3: Consider distances you move towards {} and {}.Because the distance you move towards {} is longer,so the answer is {}.".format(
+        st3_dir = "Step 3: Consider distances you move towards {} and {}. Because the distance you move towards {} is longer, so the answer is {}.".format(
             NS_dir, EW_dir, direction, direction)
         
         if end_poi not in name_adr_poi or start_poi not in name_adr_poi:
@@ -459,7 +361,7 @@ def get_poi2aoi(diags, diag_routes, aoi_dict, name_adr_poi):
         if aoi_id not in aoi_dict:  # AOI2POI
             start_aoi_name, start_aoi_addr = aoi_dict[aoi_id2]['name'], aoi_dict[aoi_id2]['address']
             start_aoi_name_addr = "{}({})".format(start_aoi_name, start_aoi_addr)
-            routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ".Finally you arrive at {}.{} is in {}.".format(end_poi, start_poi, start_aoi_name_addr)
+            routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ". Finally you arrive at {}.{} is in {}.".format(end_poi, start_poi, start_aoi_name_addr)
             question_dis = "How many meters do I need to walk from {} to {} along the road?".format(start_aoi_name_addr,
                                                                                                     end_poi)
             question_dir = "In which direction is {} from {}?".format(end_poi, start_aoi_name_addr)
@@ -487,7 +389,7 @@ def get_poi2aoi(diags, diag_routes, aoi_dict, name_adr_poi):
         else:  # POI2AOI
             end_aoi_name, end_aoi_addr = aoi_dict[aoi_id]['name'], aoi_dict[aoi_id]['address']
             end_aoi_name_addr = "{}({})".format(end_aoi_name, end_aoi_addr)
-            routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ".Finally you arrive at {}.{} is in {}.".format(end_poi, end_poi, end_aoi_name_addr)
+            routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ". Finally you arrive at {}.{} is in {}.".format(end_poi, end_poi, end_aoi_name_addr)
             question_dis = "How many meters do I need to walk from {} to {} along the road?".format(start_poi,
                                                                                                     end_aoi_name_addr)
             question_dir = "In which direction is {} from {}?".format(end_aoi_name_addr, start_poi)
@@ -513,11 +415,20 @@ def get_poi2aoi(diags, diag_routes, aoi_dict, name_adr_poi):
             poi2aoi_dir.append(dialog_dir)
             index_dis += 1
             index_dir += 1
+        if index_dis == 1000:
+            break
     return poi2aoi_dir,poi2aoi_dis
 
 
 ########POI2RD_DIR,终点POI到起点道路方向
 def get_poi2rd_dir(map, diags, diag_routes, name_adr_poi):
+    # shuffle the order of dialogs
+    combined = list(zip(diags, diag_routes))
+    random.shuffle(combined)
+    diags, diag_routes = zip(*combined)
+    diags = list(diags)
+    diag_routes = list(diag_routes)
+
     poi2rd_dir = []
     index_dir = 0
     for cnt, diag in enumerate(diags):
@@ -530,10 +441,10 @@ def get_poi2rd_dir(map, diags, diag_routes, name_adr_poi):
         end_poi_name = content['dest_name']
         end_poi_addr = content['dest_addr']
         end_poi = "{}{}".format(end_poi_name, end_poi_addr)
-        routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ".Finally you arrive at {}.".format(end_poi)
+        routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ". Finally you arrive at {}.".format(end_poi)
         dir_dis_fin = dir_all_dis(routes, secondary_directions, primary_directions, secondary_dir_to_primary_dirs)[0]
         segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
         dir_set = set()  # 净位移较大的两个正方向
         NS_dis = []
         EW_dis = []
@@ -554,8 +465,8 @@ def get_poi2rd_dir(map, diags, diag_routes, name_adr_poi):
                 NSEW['EW'].append(dis)
             else:
                 print(dir)
-        st2 = "Step 2: Find in which direction is destination {} from origin {}.Consider distances you move southward and northward,\
-            you move a total of {}-{}={} meters towards {}.Consider distances you move westward and eastward,\
+        st2 = "Step 2: Find in which direction is destination {} from origin {}. Consider distances you move southward and northward,\
+            you move a total of {}-{}={} meters towards {}. Consider distances you move westward and eastward,\
                 you move a total of {}-{}={} meters towards {}.".format(
             end_poi, start_poi, max(NS_dis, key=lambda x: x[1])[1], min(NS_dis, key=lambda x: x[1])[1],
             np.abs(NS_dis[0][1] - NS_dis[1][1]), max(NS_dis, key=lambda x: x[1])[0],
@@ -569,30 +480,30 @@ def get_poi2rd_dir(map, diags, diag_routes, name_adr_poi):
         if result is None:
             continue
         aoi_s, rd_name, junc_name, aoi_junc_direction, rd_belong_dir = result
-        st3 = "Step3: Find the direction of {}.From the address of POI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
+        st3 = "Step3: Find the direction of {}. From the address of POI on {}, which is {}, we can find the direction to road is {}, which means {} runs {}.".format(
             rd_name, rd_name, start_poi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
 
         # if 270<angle<360:  #终点在起点westnorth方向
         if dir_set == {'west', 'north'}:
             if rd_belong_dir in NS:
-                tar_dir = 'west'
-            elif rd_belong_dir in EW:
                 tar_dir = 'north'
+            elif rd_belong_dir in EW:
+                tar_dir = 'west'
         elif dir_set == {'east', 'north'}:  ##终点在起点eastnorth方向
             if rd_belong_dir in NS:
-                tar_dir = 'east'
-            elif rd_belong_dir in EW:
                 tar_dir = 'north'
+            elif rd_belong_dir in EW:
+                tar_dir = 'east'
         elif dir_set == {'east', 'south'}:  # 终点在起点eastsouth方向
             if rd_belong_dir in NS:
-                tar_dir = 'east'
-            elif rd_belong_dir in EW:
                 tar_dir = 'south'
+            elif rd_belong_dir in EW:
+                tar_dir = 'east'
         elif dir_set == {'west', 'south'}:  # 终点在起点westsouth方向
             if rd_belong_dir in NS:
-                tar_dir = 'west'
-            elif rd_belong_dir in EW:
                 tar_dir = 'south'
+            elif rd_belong_dir in EW:
+                tar_dir = 'west'
         random.shuffle(primary_directions)
         res_dict = dict(zip(["A", "B", "C", "D"], primary_directions))
         letters = ['A', 'B', 'C', 'D']
@@ -608,125 +519,21 @@ def get_poi2rd_dir(map, diags, diag_routes, name_adr_poi):
             "dir_set": dir_set,
             "answer": tar_dir
         }
-        st4 = ("Step4.Find in which direction is {end_poi} from {rd_name}.If {rd_name} runs south-north,"
-            + "then the possible answers are  'east','west'；If {rd_name} runs east-west,"
-            + "then the possible answers are 'north','south'.If the origin is on {rd_name},then  we can choose answer from the direction from origin to destination,"
-            + "which contains {dir_set}.Because the origin {start_poi} is on {rd_name},"
-            + "and {rd_name} runs {rd_dir_set},so the final answer is {answer}.").format(**fill)
+        st4 = ("Step4: Find in which direction is {end_poi} from {rd_name}.If {rd_name} runs south-north,"
+            + "then the possible answers are 'east','west'; If {rd_name} runs east-west,"
+            + "then the possible answers are 'north','south'. If the origin is on {rd_name}, then we can choose answer from the direction from origin to destination,"
+            + "which contains {dir_set}. Because the origin {start_poi} is on {rd_name},"
+            + "and {rd_name} runs {rd_dir_set}, so the final answer is {answer}.").format(**fill)
         question = "In which direction is {} from {}?".format(end_poi, rd_name)
         dialog['diag'].append(
             {'role': 'user', 'content': routine + question + '\n'.join(choices) + "\nLet's think step by step.\n"})
         dialog['diag'].append({'role': 'assistant', 'content': "Answer:{}\n".format(label) + st1 + st2 + st3 + st4})
         poi2rd_dir.append(dialog)
         index_dir += 1
+        if index_dir == 1000:
+            break
     return poi2rd_dir
 
-
-
-def get_aoi2rd_dir_osm(map, diags, diag_routes, name_adr_aoi):
-    aoi2rd_dir = []
-    index_dir = 0
-    for cnt, diag in enumerate(diags):
-        dialog = {'task': 'cityreasoning-{}'.format(REGION_EXP), 'id': 'aoi2rd_dir' + str(index_dir), 'diag': []}
-        content = json.loads(diag[1]["content"])
-        routes = content['routes']
-        start_aoi_name = content['start_name']
-        start_aoi_addr = content['start_addr']
-        start_aoi = "{}{}".format(start_aoi_name, start_aoi_addr)
-        end_aoi_name = content['dest_name']
-        end_aoi_addr = content['dest_addr']
-        end_aoi = "{}{}".format(end_aoi_name, end_aoi_addr)
-        routine = 'After Starting from {}, you '.format(start_aoi) + ", ".join(diag_routes[cnt]) + ".Finally you arrive at {}.".format(end_aoi)
-        dir_dis_fin = dir_all_dis(routes, secondary_directions, primary_directions, secondary_dir_to_primary_dirs)[0]
-        segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
-        dir_set = set()  # 净位移较大的两个正方向
-        NS_dis = []
-        EW_dis = []
-        for dir, dis in dir_dis_fin:
-            if dir in NS:
-                NS_dis.append((dir, dis))
-            elif dir in EW:
-                EW_dis.append((dir, dis))
-        dir1 = max(NS_dis, key=lambda x: x[1])[0]
-        dir2 = max(EW_dis, key=lambda x: x[1])[0]
-        dir_set.add(dir1)
-        dir_set.add(dir2)
-        NSEW = {'NS': [], 'EW': []}
-        for dir, dis in dir_dis_fin:
-            if dir in NS:
-                NSEW['NS'].append(dis)
-            elif dir in EW:
-                NSEW['EW'].append(dis)
-            else:
-                print(dir)
-        st2 = "Step 2: Find in which direction is destination {} from origin {}.Consider distances you move southward and northward,\
-            you move a total of {}-{}={} meters towards {}.Consider distances you move westward and eastward,\
-                you move a total of {}-{}={} meters towards {}.".format(
-            end_aoi, start_aoi, max(NS_dis, key=lambda x: x[1])[1], min(NS_dis, key=lambda x: x[1])[1],
-            np.abs(NS_dis[0][1] - NS_dis[1][1]), max(NS_dis, key=lambda x: x[1])[0],
-            max(EW_dis, key=lambda x: x[1])[1], min(EW_dis, key=lambda x: x[1])[1], np.abs(EW_dis[0][1] - EW_dis[1][1]),
-            max(EW_dis, key=lambda x: x[1])[0])
-        if start_aoi not in name_adr_aoi:
-            continue
-        start_aoi_id = name_adr_aoi[start_aoi]['aoi_id']
-        start_aoi_info = map.aois[start_aoi_id]
-        result = get_aoi_address(map, start_aoi_info)
-        if result is None:
-            continue
-        aoi_s, rd_name, junc_name, aoi_junc_direction, rd_belong_dir = result
-        st3 = "Step3: Find the direction of {}.From the address of AOI on {},which is {},we can find the direction to corner is {},which means {} runs {}.".format(
-            rd_name, rd_name, start_aoi_addr, rd_belong_dir, rd_name, dir_map[rd_belong_dir])
-
-        # if 270<angle<360:  #终点在起点西北方向
-        if dir_set == {'west', 'north'}:
-            if rd_belong_dir in NS:
-                tar_dir = 'west'
-            elif rd_belong_dir in EW:
-                tar_dir = 'north'
-        elif dir_set == {'east', 'north'}:  ##终点在起点东北方向
-            if rd_belong_dir in NS:
-                tar_dir = 'east'
-            elif rd_belong_dir in EW:
-                tar_dir = 'north'
-        elif dir_set == {'east', 'south'}:  # 终点在起点东南方向
-            if rd_belong_dir in NS:
-                tar_dir = 'east'
-            elif rd_belong_dir in EW:
-                tar_dir = 'south'
-        elif dir_set == {'west', 'south'}:  # 终点在起点西南方向
-            if rd_belong_dir in NS:
-                tar_dir = 'west'
-            elif rd_belong_dir in EW:
-                tar_dir = 'south'
-        random.shuffle(primary_directions)
-        res_dict = dict(zip(["A", "B", "C", "D"], primary_directions))
-        letters = ['A', 'B', 'C', 'D']
-        choices = ['{}.{}'.format(x, y) for x, y in zip(letters, primary_directions)]
-        for k in res_dict:
-            if res_dict[k] == tar_dir:
-                label = k
-        fill = {
-            "end_aoi": end_aoi,
-            "start_aoi": start_aoi,
-            "rd_name": rd_name,
-            "rd_dir_set": dir_map[rd_belong_dir],
-            "dir_set": dir_set,
-            "answer": tar_dir
-        }
-        st4 = ("Step4.Find in which direction is {end_aoi} from {rd_name}.If {rd_name} runs south-north,"
-            + "then the possible answers are  'east','west'；If {rd_name} runs east-west,"
-            + "then the possible answers are 'north','south'.If the origin is on {rd_name},then  we can choose answer from the direction from origin to destination,"
-            + "which contains {dir_set}.Because the origin {start_aoi} is on {rd_name},"
-            + "and {rd_name} runs {rd_dir_set},so the final answer is {answer}.").format(**fill)
-        
-        question = "In which direction is {} from {}?".format(end_aoi, rd_name)
-        dialog['diag'].append(
-            {'role': 'user', 'content': routine + question + '\n'.join(choices) + "\nLet's think step by step.\n"})
-        dialog['diag'].append({'role': 'assistant', 'content': "Answer:{}\n".format(label) + st1 + st2 + st3 + st4})
-        aoi2rd_dir.append(dialog)
-        index_dir += 1
-    return aoi2rd_dir
 
 
 ########AOI2RD_DIR,终点AOI到起点道路方向
@@ -735,9 +542,16 @@ def get_aoi2rd_dir_osm(map, diags, diag_routes, name_adr_aoi):
 Step1.Devide above routine into segments:800 meters 从south到north, 200 meters 从east到west,700 meters 从east到west, 100 meters 从north到south,500 meters 从north到south .
 Step2.Find in which direction is destination (学生活动中心(中关村north大街north侧清华west门north区内, 距离中关村north大街和中关村north大街交叉口westnorth角50m以内)) from origin(建国小区(志新west路east侧, 距离志新路和志新west路交叉口north角500m)). In the routine,you  need to move northward 800 meters,move westward 200+700=900 meters,move southward 100+500=600 meters.Consider distances you move southward and northward,800 is larger than 600,so you move totally northward.Consider distances you move westward and southward,900 is larger than 0,so you move totally westward.So the direction from origin to destination contains "west"，"north".
 Step3.Find the direction of 志新west路.From the address of 建国小区 on 志新west路,which is 志新west路east侧, 距离志新路和志新west路交叉口north角500m,we can find the direction to junction is "north",which means 志新west路 runs south-north.
-Step4.Answer:C.Find in which direction is 老场院north区(中关村north大街north侧, 距离中关村north大街和中关村north大街交叉口westnorth角50m以内) from 志新west路.If 志新west路 runs south-north,then the possible answers are  "east"，"west"；If 志新west路 runs east-west,then the possible answers are "north","south".If the origin is on 志新west路,then  we can choose answer from the direction from origin to destination ，which contains "west"、"north".Because the origin 建国小区 is on 志新west路,and 志新west路 runs south-north,so the final answer is west.
+Step4.Answer:C.Find in which direction is 老场院north区(中关村north大街north侧, 距离中关村north大街和中关村north大街交叉口westnorth角50m以内) from 志新west路.If 志新west路 runs south-north,then the possible answers are  "east", "west"; If 志新west路 runs east-west,then the possible answers are "north","south".If the origin is on 志新west路,then  we can choose answer from the direction from origin to destination ，which contains "west"、"north".Because the origin 建国小区 is on 志新west路,and 志新west路 runs south-north,so the final answer is west.
 """
 def get_aoi2rd_dir(map, diags, diag_routes, aoi_dict, name_adr_poi):
+    # shuffle the order of dialogs
+    combined = list(zip(diags, diag_routes))
+    random.shuffle(combined)
+    diags, diag_routes = zip(*combined)
+    diags = list(diags)
+    diag_routes = list(diag_routes)
+
     aoi2rd_dir = []
     index_dir_aoi = 0
     for cnt, diag in enumerate(diags):
@@ -763,7 +577,7 @@ def get_aoi2rd_dir(map, diags, diag_routes, aoi_dict, name_adr_poi):
         routine = 'After starting from {}, you '.format(start_poi) + ", ".join(diag_routes[cnt]) + ". Finally you arrive at {}.".format(end_poi)
         dir_dis_fin = dir_all_dis(routes, secondary_directions, primary_directions, secondary_dir_to_primary_dirs)[0]
         segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction:\n" + segment + '\n'
         dir_set = set()  # 净位移较大的两个正方向
         NS_dis = []
         EW_dis = []
@@ -784,8 +598,8 @@ def get_aoi2rd_dir(map, diags, diag_routes, aoi_dict, name_adr_poi):
                 NSEW['EW'].append(dis)
             else:
                 print(dir)
-        st2 = "Step 2: Find in which direction is destination {} from origin {}.Consider distances you move southward and northward,\
-            you move a total of {}-{}={} meters towards {}.Consider distances you move westward and eastward,\
+        st2 = "Step 2: Find in which direction is destination {} from origin {}. Consider distances you move southward and northward,\
+            you move a total of {}-{}={} meters towards {}. Consider distances you move westward and eastward,\
                 you move a total of {}-{}={} meters towards {}.".format(
             end_poi, start_poi, max(NS_dis, key=lambda x: x[1])[1], min(NS_dis, key=lambda x: x[1])[1],
             np.abs(NS_dis[0][1] - NS_dis[1][1]), max(NS_dis, key=lambda x: x[1])[0],
@@ -840,9 +654,9 @@ def get_aoi2rd_dir(map, diags, diag_routes, aoi_dict, name_adr_poi):
             "answer": tar_dir,
             "label": label
         }
-        st4 = ("Step4.Answer:{label}.Find in which direction is {end_aoi} from {rd_name}.If {rd_name} runs south-north,"
-            + "then the possible answers are  'east','west'；If {rd_name} runs east-west,"
-            + "then the possible answers are 'north','south'.If the origin is on {rd_name},then  we can choose answer from the direction from origin to destination,"
+        st4 = ("Step4.Answer:{label}. Find in which direction is {end_aoi} from {rd_name}. If {rd_name} runs south-north,"
+            + "then the possible answers are  'east','west'; If {rd_name} runs east-west,"
+            + "then the possible answers are 'north','south'. If the origin is on {rd_name}, then  we can choose answer from the direction from origin to destination,"
             + "which contains {dir_set}.Because the origin {start_poi} is on {rd_name},"
             + "and {rd_name} runs {rd_dir_set},so the final answer is {answer}.").format(**fill)
         question = "In which direction is {} from {}?".format(end_aoi_name_addr, rd_name)
@@ -851,12 +665,20 @@ def get_aoi2rd_dir(map, diags, diag_routes, aoi_dict, name_adr_poi):
         dialog['diag'].append({'role': 'assistant', 'content': st1 + st2 + st3 + st4})
         aoi2rd_dir.append(dialog)
         index_dir_aoi += 1
+        if index_dir_aoi == 1000:
+            break
     return aoi2rd_dir
 
 
-
-def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
+def get_poi2poi_dir(diags, diag_routes):
     # #######对方向推理训练数据进行泛化
+    # shuffle the order of dialogs
+    combined = list(zip(diags, diag_routes))
+    random.shuffle(combined)
+    diags, diag_routes = zip(*combined)
+    diags = list(diags)
+    diag_routes = list(diag_routes)
+
     all_train_data = []
     for cnt, train in enumerate(diags):
         if cnt <= 1000:
@@ -871,7 +693,7 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
     index_dir = 0
     task_name = 'cityreasoning-{}'.format(REGION_EXP)
     for train, cnt in dir_seg1:
-        dialog = {'task': task_name, 'id': id + str(index_dir), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dir' + str(index_dir), 'diag': []}
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
         start_poi_addr = content['start_addr']
@@ -888,7 +710,7 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
         letters = ['A', 'B', 'C', 'D']
         choices = ['{}.{}'.format(x, y) for x, y in zip(letters, directions)]
         segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
         st2 = "Step 2: Analyze the overall direction of the journey:\n" + ','.join(
             [str(item) for item in [(dir_dis[0], int(dir_dis[1])) for dir_dis in dir_dis_fin]]) + '\n'
         east_west = sorted(
@@ -902,10 +724,10 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
                 (north_south[0][0], north_south[0][1], north_south[1][1])]
         fin_direction = max(result, key=lambda x: abs(x[1] - x[2]))
         fin_direction2 = min(result, key=lambda x: abs(x[1] - x[2]))
-        st3 = "Step 3:{} is larger than {},so there is a {} travel.{} is larger than {},so there is a {} travel.\n".format(
+        st3 = "Step 3:{} is larger than {}, so there is a {} travel. {} is larger than {}, so there is a {} travel.\n".format(
             int(east_west[0][1]), int(east_west[1][1]), east_west[0][0], int(north_south[0][1]), int(north_south[1][1]),
             north_south[0][0])
-        st4 = "Step 4:Compare above two directions,{}:{}-{}={},{}:{}-{}={}.{} is larger than {},so the overall direction is {}.So the answer is {}.\n".format(
+        st4 = "Step 4: Compare above two directions, {}:{}-{}={},{}:{}-{}={}. {} is larger than {}, so the overall direction is {}. So the answer is {}.\n".format(
             fin_direction[0], int(fin_direction[1]), int(fin_direction[2]), int(fin_direction[1] - fin_direction[2]),
             fin_direction2[0], int(fin_direction2[1]), int(fin_direction2[2]), int(fin_direction2[1] - fin_direction2[2]),
             int(fin_direction[1] - fin_direction[2]), int(fin_direction2[1] - fin_direction2[2]), fin_direction[0],
@@ -923,7 +745,7 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
 
     ########单轮，非整数
     for train, cnt in dir_seg2:
-        dialog = {'task': task_name, 'id': id + str(index_dir), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dir' + str(index_dir), 'diag': []}
         user_head = "Let's think step by step.\n"
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
@@ -940,7 +762,7 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
         letters = ['A', 'B', 'C', 'D']
         choices = ['{}.{}'.format(x, y) for x, y in zip(letters, directions)]
         segment = ','.join([str(item) for item in dir_dis_fin])
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
         st2 = "Step 2: Analyze the overall direction of the journey:\n" + ','.join(
             [str(item) for item in dir_dis_fin]) + '\n'
         east_west = sorted(
@@ -953,9 +775,9 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
                 (north_south[0][0], north_south[0][1], north_south[1][1])]
         fin_direction = max(result, key=lambda x: abs(x[1] - x[2]))
         fin_direction2 = min(result, key=lambda x: abs(x[1] - x[2]))
-        st3 = "Step 3:{} is larger than {},so there is a {} travel.{} is larger than {},so there is a {} travel.\n".format(
+        st3 = "Step 3: {} is larger than {}, so there is a {} travel. {} is larger than {}, so there is a {} travel.\n".format(
             east_west[0][1], east_west[1][1], east_west[0][0], north_south[0][1], north_south[1][1], north_south[0][0])
-        st4 = "Step 4:Compare above two directions,{}:{}-{}={},{}:{}-{}={}.{} is larger than {},so the overall direction is {}.So the answer is {}.\n".format(
+        st4 = "Step 4: Compare above two directions, {}:{}-{}={},{}:{}-{}={}.{} is larger than {}, so the overall direction is {}. So the answer is {}.\n".format(
             fin_direction[0], fin_direction[1], fin_direction[2], fin_direction[1] - fin_direction[2], fin_direction2[0],
             fin_direction2[1], fin_direction2[2], fin_direction2[1] - fin_direction2[2],
                                                                 fin_direction[1] - fin_direction[2],
@@ -973,7 +795,7 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
         index_dir += 1
     #######多轮，整数
     for train, cnt in dir_seg3:
-        dialog = {'task': task_name, 'id': id + str(index_dir), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dir' + str(index_dir), 'diag': []}
         user_head = "Let's think step by step.\n"
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
@@ -990,12 +812,12 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
         letters = ['A', 'B', 'C', 'D']
         choices = ['{}.{}'.format(x, y) for x, y in zip(letters, directions)]
         user1 = ques + '\n' + '\n'.join(
-            choices) + '\n' + 'To answer the question,please think about the navigation instruction about starting from {} and  arriving at the destination  {}'.format(
+            choices) + '\n' + 'To answer the question, please think about the navigation instruction about starting from {} and arriving at the destination {}'.format(
             start_poi, end_poi)
         user2 = 'Given the navigation instruction,please choose the most suitable one among A, B, C and D as the answer to above question.' + user_head
         segment = ','.join([str(item) for item in dir_dis_fin])
 
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
         st2 = "Step 2: Analyze the overall direction of the journey:\n" + ','.join(
             [str(item) for item in [(dir_dis[0], int(dir_dis[1])) for dir_dis in dir_dis_fin]]) + '\n'
         east_west = sorted(
@@ -1008,10 +830,10 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
                 (north_south[0][0], north_south[0][1], north_south[1][1])]
         fin_direction = max(result, key=lambda x: abs(x[1] - x[2]))
         fin_direction2 = min(result, key=lambda x: abs(x[1] - x[2]))
-        st3 = "Step 3:{} is larger than {},so there is a {} travel.{} is larger than {},so there is a {} travel.\n".format(
+        st3 = "Step 3: {} is larger than {}, so there is a {} travel. {} is larger than {}, so there is a {} travel.\n".format(
             int(east_west[0][1]), int(east_west[1][1]), east_west[0][0], int(north_south[0][1]), int(north_south[1][1]),
             north_south[0][0])
-        st4 = "Step 4:Compare above two directions,{}:{}-{}={},{}:{}-{}={}.{} is larger than {},so the overall direction is {}.So the answer is {}.\n".format(
+        st4 = "Step 4: Compare above two directions,{}:{}-{}={},{}:{}-{}={}.{} is larger than {}, so the overall direction is {}. So the answer is {}.\n".format(
             fin_direction[0], int(fin_direction[1]), int(fin_direction[2]), int(fin_direction[1] - fin_direction[2]),
             fin_direction2[0], int(fin_direction2[1]), int(fin_direction2[2]), int(fin_direction2[1] - fin_direction2[2]),
             int(fin_direction[1] - fin_direction[2]), int(fin_direction2[1] - fin_direction2[2]), fin_direction[0],
@@ -1031,7 +853,7 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
 
     ######多轮，非整数
     for train, cnt in dir_seg4:
-        dialog = {'task': task_name, 'id': id + str(index_dir), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dir' + str(index_dir), 'diag': []}
         user_head = "Let's think step by step.\n"
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
@@ -1054,7 +876,7 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
                                            secondary_dir_to_primary_dirs)[0]
         segment = ','.join([str(item) for item in dir_dis_fin])
 
-        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'.The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
+        st1 = "Step 1: Determine the direction of each segment of the journey in the form of '(The direction you are facing when walking along the road,distance)'. The distance moved in the secondary direction needs to be multiplied by 0.7 and decomposed into the primary direction.:\n" + segment + '\n'
         st2 = "Step 2: Analyze the overall direction of the journey:\n" + ','.join(
             [str(item) for item in dir_dis_fin]) + '\n'
         east_west = sorted(
@@ -1067,9 +889,9 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
                 (north_south[0][0], north_south[0][1], north_south[1][1])]
         fin_direction = max(result, key=lambda x: abs(x[1] - x[2]))
         fin_direction2 = min(result, key=lambda x: abs(x[1] - x[2]))
-        st3 = "Step 3:{} is larger than {},so there is a {} travel.{} is larger than {},so there is a {} travel.\n".format(
+        st3 = "Step 3: {} is larger than {}, so there is a {} travel. {} is larger than {}, so there is a {} travel.\n".format(
             east_west[0][1], east_west[1][1], east_west[0][0], north_south[0][1], north_south[1][1], north_south[0][0])
-        st4 = "Step 4:Compare above two directions,{}:{}-{}={},{}:{}-{}={}.{} is larger than {},so the overall direction is {}.So the answer is {}.\n".format(
+        st4 = "Step 4: Compare above two directions, {}:{}-{}={}, {}:{}-{}={}. {} is larger than {}, so the overall direction is {}. So the answer is {}.\n".format(
             fin_direction[0], fin_direction[1], fin_direction[2], fin_direction[1] - fin_direction[2], fin_direction2[0],
             fin_direction2[1], fin_direction2[2], fin_direction2[1] - fin_direction2[2],
                                                                 fin_direction[1] - fin_direction[2],
@@ -1089,7 +911,14 @@ def get_poi2poi_dir(diags, diag_routes, id="poi2poi_dir"):
         index_dir += 1
     return dialogs_dir1
 
-def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
+def get_poi2poi_dis(diags, diag_routes):
+    # shuffle the order of dialogs
+    combined = list(zip(diags, diag_routes))
+    random.shuffle(combined)
+    diags, diag_routes = zip(*combined)
+    diags = list(diags)
+    diag_routes = list(diag_routes)
+    
     all_train_data = []
     for cnt, train in enumerate(diags):
         if cnt <= 1000:
@@ -1105,9 +934,9 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
     ######单轮，非整，无限制
     dialogs_dis1 = []
     index = 0
-    task_name = 'city reasoning-{}'.format(REGION_EXP)
+    task_name = 'cityreasoning-{}'.format(REGION_EXP)
     for train, cnt in dis_seg1:
-        dialog = {'task': task_name, 'id': id + str(index), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index), 'diag': []}
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
         start_poi_addr = content['start_addr']
@@ -1127,7 +956,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1140,7 +969,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     ######单轮，整，无限制
     for train, cnt in dis_seg2:
-        dialog = {'task': task_name, 'id': id + str(index), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index), 'diag': []}
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
         start_poi_addr = content['start_addr']
@@ -1160,8 +989,8 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
-            0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
+            0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1173,7 +1002,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     ######单轮，非整，限制
     for train, cnt in dis_seg3:
-        dialog = {'task': task_name, 'id': id + str(index), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index), 'diag': []}
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
         start_poi_addr = content['start_addr']
@@ -1195,8 +1024,8 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
-            0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
+            0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1208,7 +1037,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     ######单轮，整，限制
     for train, cnt in dis_seg4:
-        dialog = {'task': task_name, 'id': id + str(index), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index), 'diag': []}
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
         start_poi_addr = content['start_addr']
@@ -1220,7 +1049,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         # Extracting numbers before "meters"
         distances = re.findall(r'for (\d+) meters', routine)
         total_length = np.sum([float(distance) for distance in distances])
-        ques = "You only need to consider the distances walking along the roads.How many meters do I need to walk from {} to {} along the road?".format(
+        ques = "You only need to consider the distances walking along the roads. How many meters do I need to walk from {} to {} along the road?".format(
             start_poi, end_poi)
         choice_items = [int(total_length * 2), int(total_length / 2), int(total_length - 1000), int(total_length)]
         random.shuffle(choice_items)
@@ -1229,8 +1058,8 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
-            0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
+            0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1242,7 +1071,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     ######多轮，非整，无限制
     for train, cnt in dis_seg5:
-        dialog = {'task': task_name, 'id': id + str(index - 1), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index - 1), 'diag': []}
         user_head = "Let's think step by step.\n"
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
@@ -1261,14 +1090,14 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         letters = ['A', 'B', 'C', 'D']
         choices = ['{}.{}'.format(x, y) for x, y in zip(letters, choice_items)]
         user1 = ques + '\n' + '\n'.join(
-            choices) + '\n' + 'To answer the question,Please think about the navigation instruction about starting from {} and  arriving at the destination  {}'.format(
+            choices) + '\n' + 'To answer the question, please think about the navigation instruction about starting from {} and arriving at the destination {}'.format(
             start_poi, end_poi)
-        user2 = 'Given the navigation instruction,please choose the most suitable one among A, B, C and D as the answer to above question.' + user_head
+        user2 = 'Given the navigation instruction, please choose the most suitable one among A, B, C and D as the answer to above question.' + user_head
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
-            0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
+            0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1282,7 +1111,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     ######多轮，整，无限制
     for train, cnt in dis_seg6:
-        dialog = {'task': task_name, 'id': id + str(index - 1), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index - 1), 'diag': []}
         user_head = "Let's think step by step.\n"
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
@@ -1301,13 +1130,13 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         letters = ['A', 'B', 'C', 'D']
         choices = ['{}.{}'.format(x, y) for x, y in zip(letters, choice_items)]
         user1 = ques + '\n' + '\n'.join(
-            choices) + '\n' + 'To answer the question,Please think about the navigation instruction about starting from {} and  arriving at the destination  {}'.format(
+            choices) + '\n' + 'To answer the question, please think about the navigation instruction about starting from {} and arriving at the destination {}'.format(
             start_poi, end_poi)
         user2 = 'Given the navigation instruction,please choose the most suitable one among A, B, C and D as the answer to above question.' + user_head
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1321,7 +1150,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     ######多轮，非整，限制
     for train, cnt in dis_seg7:
-        dialog = {'task': task_name, 'id': id + str(index - 1), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index - 1), 'diag': []}
         user_head = "Let's think step by step.\n"
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
@@ -1341,14 +1170,14 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         letters = ['A', 'B', 'C', 'D']
         choices = ['{}.{}'.format(x, y) for x, y in zip(letters, choice_items)]
         user1 = ques + '\n' + '\n'.join(
-            choices) + '\n' + 'To answer the question,Please think about the navigation instruction about starting from {} and  arriving at the destination  {}'.format(
+            choices) + '\n' + 'To answer the question, please think about the navigation instruction about starting from {} and arriving at the destination {}'.format(
             start_poi, end_poi)
         user2 = 'Given the navigation instruction,please choose the most suitable one among A, B, C and D as the answer to above question.' + user_head
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
-            0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
+            0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1362,7 +1191,7 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     ######多轮，整，限制
     for train, cnt in dis_seg8:
-        dialog = {'task': task_name, 'id': id + str(index - 1), 'diag': []}
+        dialog = {'task': task_name, 'id': 'poi2poi_dis' + str(index - 1), 'diag': []}
         user_head = "Let's think step by step.\n"
         content = json.loads(train[1]["content"])
         start_poi_name = content['start_name']
@@ -1375,21 +1204,21 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         # Extracting numbers before "meters"
         distances = re.findall(r'for (\d+) meters', routine)
         total_length = np.sum([float(distance) for distance in distances])
-        ques = "You only need to consider the distances walking along the roads.How many meters do I need to walk from {} to {} along the road?".format(
+        ques = "You only need to consider the distances walking along the roads. How many meters do I need to walk from {} to {} along the road?".format(
             start_poi, end_poi)
         choice_items = [int(total_length * 2), int(total_length / 2), int(total_length - 1000), int(total_length)]
         random.shuffle(choice_items)
         letters = ['A', 'B', 'C', 'D']
         choices = ['{}.{}'.format(x, y) for x, y in zip(letters, choice_items)]
         user1 = ques + '\n' + '\n'.join(
-            choices) + '\n' + 'To answer the question,Please think about the navigation instruction about starting from {} and  arriving at the destination  {}'.format(
+            choices) + '\n' + 'To answer the question, please think about the navigation instruction about starting from {} and arriving at the destination {}'.format(
             start_poi, end_poi)
-        user2 = 'Given the navigation instruction,please choose the most suitable one among A, B, C and D as the answer to above question.' + user_head
+        user2 = 'Given the navigation instruction, please choose the most suitable one among A, B, C and D as the answer to above question.' + user_head
         distance_strs = ','.join([str(item) + 'm' for item in distances])
 
         st1 = "Step 1: Find the distance traveled for each segment of the road:\n" + distance_strs + '\n'
-        st2 = "Step 2:Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
-            0] + ".So the answer is {}m.\n".format(compute_length_template(distances)[1])
+        st2 = "Step 2: Add all distances above together to get the total distance:\n" + compute_length_template(distances)[
+            0] + ". So the answer is {}m.\n".format(compute_length_template(distances)[1])
         for cnt2, choice in enumerate(choice_items):
             if choice == total_length:
                 answer = letters[cnt2]
@@ -1403,14 +1232,6 @@ def get_poi2poi_dis(diags, diag_routes, id="poi2poi_dis"):
         index += 1
     return dialogs_dis1
 
-def get_aoi2aoi_dis(diags, diag_routes):
-    dialog_dis = get_poi2poi_dis(diags, diag_routes, id="aoi2aoi_dis")
-    return dialog_dis
-
-def get_aoi2aoi_dir(diags, diag_routes):
-    dialog_dir = get_poi2poi_dir(diags, diag_routes, id="aoi2aoi_dir")
-    return dialog_dir
-
 def main(args):
     city_map = MAP_DICT[REGION_EXP]
     port = args.port if args.port is not None else MAP_PORT_DICT[REGION_EXP]
@@ -1421,7 +1242,7 @@ def main(args):
         routing_path=ROUTING_PATH, 
         port=port)
     # wait for map to load
-    time.sleep(10)
+    time.sleep(15)
     if not isinstance(args.output_path, str):
         output_path = "simulate/examples/"
     else:
@@ -1429,37 +1250,23 @@ def main(args):
 
     random.seed(42)
    
+    poi_message = pd.read_csv(os.path.join(RESOURCE_PATH, "{}_pois.csv".format(REGION_EXP)))
     aoi_message = pd.read_csv(os.path.join(RESOURCE_PATH, "{}_aois.csv".format(REGION_EXP)))
-    if OSM_REGION == False:
-        poi_message = pd.read_csv(os.path.join(RESOURCE_PATH, "{}_pois.csv".format(REGION_EXP)))
-        poi_dict = {}
-        for row in poi_message.itertuples():
-            key = row.poi_id
-            category = map.get_poi(key)['category']
-            name = row.name
-            addr = row.Address
-            if not isinstance(name, str):
-                continue
-            poi_dict[key] = {
-                "aoi_id": map.get_poi(key)['aoi_id'], "category": category, "name": name, "address": addr,
-                "coord": map.get_poi(key)['shapely_lnglat'].coords[0],
-            }
-        print(f"define poi_dict done! len:{len(poi_dict)}")
-        type_pois = {}  
 
-        for poi_id, poi in poi_dict.items():
-            poi_type = poi["category"]
-            if poi_type in type_pois:
-                type_pois[poi_type].append(poi_id)
-            else:
-                type_pois[poi_type] = [poi_id]
-        name_adr_poi = {}
-        for id, poi in poi_dict.items():
-            name = poi['name']
-            addr = poi['address']
-            flag = "{}({})".format(name, addr)
-            if flag not in name_adr_poi:
-                name_adr_poi[flag] = poi
+    poi_dict = {}
+    for row in poi_message.itertuples():
+        key = row.poi_id
+        category = map.get_poi(key)['category']
+        category = category.split(" > ")[0] if " > " in category else category
+        name = row.name
+        addr = row.Address
+        if not isinstance(name, str):
+            continue
+        poi_dict[key] = {
+            "aoi_id": map.get_poi(key)['aoi_id'], "category": category, "name": name, "Address": addr,
+            "coord": map.get_poi(key)['shapely_lnglat'].coords[0],
+        }
+    print(f"define poi_dict done! len:{len(poi_dict)}")
 
     aoi_dict = {} 
     # filter "nearby" aoi
@@ -1479,26 +1286,36 @@ def main(args):
         aoi_dict[aoi_id]['name'] = aoi_name
         aoi_dict[aoi_id]['address'] = address
         aoi_dict[aoi_id]['poi_ids'] = poi_ids
-        aoi_dict[aoi_id]['aoi_id'] = aoi_id
     print(f"define aoi_dict done! len:{len(aoi_dict)}")
-    name_adr_aoi = {}
-    for id, aoi in aoi_dict.items():
-        name = aoi['name']
-        addr = aoi['address']
-        flag = "{}({})".format(name, addr)
-        if flag not in name_adr_aoi:
-            name_adr_aoi[flag] = aoi
 
+    type_pois = {}  
+
+    for poi_id, poi in poi_dict.items():
+        poi_type = poi["category"]
+        if poi_type in type_pois:
+            type_pois[poi_type].append(poi_id)
+        else:
+            type_pois[poi_type] = [poi_id]
+    
     train_data = []
     # EVAL_DATA=True
-    with open(os.path.join(TRAIN_DATA_PATH, "citywalk-{}-mock-eval.jsonl".format(REGION_EXP)),
+    # 输入结构化导航信息
+    with open(os.path.join(TRAIN_DATA_PATH, "citywalk-{}-mock-{}.jsonl".format(REGION_EXP, DATA_VERSION)),
               'r',
               encoding="utf-8") as f:
         for line in f:
             train = json.loads(line)
             train_data.append(train)
     diags = [train_data[i]['diag'] for i in range(len(train_data))]
-    
+
+
+    name_adr_poi = {}
+    for id, poi in poi_dict.items():
+        name = poi['name']
+        addr = poi['Address']
+        flag = "{}({})".format(name, addr)
+        if flag not in name_adr_poi:
+            name_adr_poi[flag] = poi
 
     ########训练数据提取#######
     diag_records = []
@@ -1514,6 +1331,7 @@ def main(args):
         steps = (len(routes) + 1) / 2
         if steps > STEP:
             continue
+        # 将结构化导航信息转换为文本描述
         for route in routes:
             if route["type"] == "road":
                 diag_route.append(
@@ -1525,31 +1343,20 @@ def main(args):
                 )
         diag_records.append(diag)
         diag_routes.append(diag_route)
-    print(f"Length of diag_records: {len(diag_records)}")
-    print(f"Length of diag_routes: {len(diag_routes)}")
+    # print(f"Length of diag_records: {len(diag_records)}")
+    # print(f"Length of diag_routes: {len(diag_routes)}")
+    assert len(diag_records) == len(diag_routes), f"Mismatch: diag_records has {len(diag_records)} items, while diag_routes has {len(diag_routes)} items."
 
     print("Start to generate data for CityReasoning!")
-    
-    if OSM_REGION == False:
-        # For external data, 8 types of data
-        aoi2rd_dir = get_aoi2rd_dir(map, diag_records, diag_routes, aoi_dict, name_adr_poi)
-        aoi2rd_dis = get_aoi2rd_dis(map, diag_records, diag_routes, aoi_dict, name_adr_poi)
-        poi2rd_dir = get_poi2rd_dir(map, diag_records, diag_routes, name_adr_poi)
-        poi2rd_dis = get_poi2rd_dis(map, diag_records, diag_routes, name_adr_poi)
-        poi2poi_dir = get_poi2poi_dir(diag_records, diag_routes)
-        poi2poi_dis = get_poi2poi_dis(diag_records, diag_routes)
-        poi2aoi_dir, poi2aoi_dis = get_poi2aoi(diag_records, diag_routes, aoi_dict, name_adr_poi)
-        print("Data generation done!")
-        all_data = poi2rd_dir + poi2rd_dis + aoi2rd_dir + aoi2rd_dis + poi2aoi_dir + poi2aoi_dis + poi2poi_dir + poi2poi_dis
-    else:
-        # For osm data, 4 types of data
-        aoi2rd_dis = get_aoi2rd_dis_osm(map, diag_records, diag_routes, name_adr_aoi)
-        aoi2rd_dir = get_aoi2rd_dir_osm(map, diag_records, diag_routes, name_adr_aoi)
-        aoi2aoi_dir = get_aoi2aoi_dir(diag_records, diag_routes)
-        aoi2aoi_dis = get_aoi2aoi_dis(diag_records, diag_routes)
-        print("Data generation done!")
-        all_data = aoi2rd_dir + aoi2rd_dis + aoi2aoi_dir + aoi2aoi_dis
-    
+    poi2rd_dir = get_poi2rd_dir(map, diag_records, diag_routes, name_adr_poi)
+    poi2rd_dis = get_poi2rd_dis(map, diag_records, diag_routes, name_adr_poi)
+    aoi2rd_dir = get_aoi2rd_dir(map, diag_records, diag_routes, aoi_dict, name_adr_poi)
+    aoi2rd_dis = get_aoi2rd_dis(map, diag_records, diag_routes, aoi_dict, name_adr_poi)
+    poi2aoi_dir, poi2aoi_dis = get_poi2aoi(diag_records, diag_routes, aoi_dict, name_adr_poi)
+    poi2poi_dir = get_poi2poi_dir(diag_records, diag_routes)
+    poi2poi_dis = get_poi2poi_dis(diag_records, diag_routes)
+    print("Data generation done!")
+    all_data = poi2rd_dir + poi2rd_dis + aoi2rd_dir + aoi2rd_dis + poi2aoi_dir + poi2aoi_dis + poi2poi_dir + poi2poi_dis
 
     # 输出路径
     output_file = os.path.join(output_path, "cityreasoning_{}_{}.jsonl".format(REGION_EXP, DATA_VERSION))

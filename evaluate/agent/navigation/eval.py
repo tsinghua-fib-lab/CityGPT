@@ -10,8 +10,8 @@ from pycityproto.city.geo.v2.geo_pb2 import (
 )
 import pycityproto.city.routing.v2.routing_pb2 as routing_pb
 import pycityproto.city.routing.v2.routing_service_pb2 as routing_service
-from pycitysim.map import Map
-from pycitysim.routing import RoutingClient
+from pycitydata.map import Map
+from citysim.routing import RoutingClient
 import pandas as pd
 import numpy as np
 from openai import OpenAI #type

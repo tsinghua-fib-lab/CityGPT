@@ -1,0 +1,42 @@
+### model
+model_name_or_path: /data4/citygpt/init_ckpt/llama3/Meta-Llama-3-8B-Instruct
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json
+
+### dataset
+dataset: citygpt-Beijing-v24.5-SF-v2.3
+dataset_dir: /data4/citygpt/datasets/city_world_model/merge/
+template: llama3
+cutoff_len: 4096
+max_samples: 4010608000000000000   # sample limited data for debug, should be a big value for normal training
+overwrite_cache: true
+preprocessing_num_workers: 64
+
+### output
+output_dir: /data4/citygpt/model_zoo/citygpt-llama3-8b-Beijing-v24.5-SF-v2.3-60-unpk-20250208
+logging_steps: 10
+save_steps: 1000000
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 1.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+packing: true
+neat_packing: false
+
+### eval
+val_size: 0.1
+per_device_eval_batch_size: 1
+eval_strategy: "no"
+eval_steps: 500

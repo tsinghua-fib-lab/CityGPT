@@ -1,3 +1,7 @@
-[submodule "evaluate/opencompass-0.2.4"]
-	path = evaluate/opencompass-0.2.4
+[submodule "evaluate/opencompass-0.3.9"]
+	path = evaluate/opencompass-0.3.9
 	url = https://github.com/open-compass/opencompass
+[submodule "train/LLAMA-Factory-0.8.3"]
+	path = train/LLAMA-Factory-0.8.3
+	url = https://github.com/vonfeng/LLAMA-Factory.git
+	branch = v0.8.3-merge

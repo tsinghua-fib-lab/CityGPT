@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
-from evaluate.city_eval.utils import get_chat_completion
+from evaluate.city_eval.utils import get_chat_completion, extract_choice
 
 def few_shot_exmaples():
     # Q01 = [dict(role="user", content=get_prompts("system") + "\n"+ get_prompts("user").format(data_by_traj_id[traj_id], target_stay_time, my_dict_str, choice_list))]
@@ -85,32 +85,6 @@ def get_prompts_new(role):
     else:
         raise NotImplementedError
 
-def extract_choice(gen, choice_list):
-    # answer is A | choice is A | choose A
-    res = re.search(
-        r"(?:(?:[Cc]hoose)|(?:(?:[Aa]nswer|[Cc]hoice)(?![^ABCD]{0,20}?(?:n't|not))[^ABCD]{0,10}?\b(?:|is|:|be))\b)[^ABCD]{0,20}?\b(A|B|C|D)\b",
-        gen,
-    )
-
-    # A is correct | A is right
-    if res is None:
-        res = re.search(
-            r"\b(A|B|C|D)\b(?![^ABCD]{0,8}?(?:n't|not)[^ABCD]{0,5}?(?:correct|right))[^ABCD]{0,10}?\b(?:correct|right)\b",
-            gen,
-        )
-
-    # straight answer: A
-    if res is None:
-        res = re.search(r"^(A|B|C|D)(?:\.|,|:|$)", gen)
-
-    # simply extract the first appearred letter
-    if res is None:
-        res = re.search(r"(?<![a-zA-Z])(A|B|C|D)(?![a-zA-Z=])", gen)
-
-    if res is None:
-        return choice_list[choice_list.index(process.extractOne(gen, choice_list)[0])]
-    
-    return res.group(1)
 
 def bleu_score(reference, candidate):
     reference_tokens = reference.split()
@@ -189,42 +163,4 @@ def check_weekend(date_string):
         return '工作日'
     else:
         return '休息日'
-
-
-def askChatGPT(messages, model_name):
-
-    if "gpt" not in model_name:
-        model_name, port = model_name.split(":")
-    model_name_dict = {
-        "gpt-3.5": "gpt-3.5-turbo-0125",
-        "gpt-4": "gpt-4-0125-preview",
-        "LLama3-70B-AWQ-4bit": "LLama3-70B-AWQ-4bit",
-        "chatglm3-6B-v21.4": "chatglm3-6B-v21.4",
-        "chatglm3-6B-origin-20240510":"chatglm3-6B-origin-20240510"
-    }
-    if "gpt" in model_name:
-        openai.proxy = "http://127.0.0.1:10190"
-        openai.api_key = ''
-        
-    elif "LLama3-70B-AWQ-4bit" == model_name:
-        openai.api_base = "http://xx/v1"
-        openai.api_key = ""
-    elif "chatglm3-6B-v21.4"==model_name:
-        openai.api_base = "http://xx:{}/v1".format(port)
-        openai.api_key ="t"
-    else:
-        openai.api_base = "http://xx:{}/v1".format(port)
-        openai.api_key =""
-
-    model_name = model_name_dict[model_name]
-
-    response = openai.ChatCompletion.create(
-        model=model_name,
-        messages=messages,
-        temperature=0,
-        max_tokens=500,
-    )
-    # print(response.choices[0].message["content"])
-
-    return response['choices'][0]['message']['content'], response['usage']['total_tokens']
 

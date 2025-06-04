@@ -8,14 +8,15 @@ import math
 import signal
 import random
 import argparse
+from shapely import Point, Polygon
 
-from simulate.utils import cal_angle, angle2dir, angle2dir_4, load_map, load_poi_category_dict
+from simulate.utils import cal_angle, angle2dir, angle2dir_4, load_map
 from simulate.address_system import get_center_point, get_next_road_name_pre, get_next_road_name_suc
 from simulate.player import TextPlayer
-from simulate.templates import *
-from config import  REGION_EXP, DATA_VERSION, RESOURCE_PATH, OSM_REGION, MAP_CACHE_PATH, ROUTING_PATH, MAP_DICT, MAP_PORT_DICT
+from config import  REGION_EXP, DATA_VERSION, RESOURCE_PATH, OSM_ADDRESS, MAP_CACHE_PATH, ROUTING_PATH, MAP_DICT, MAP_PORT_DICT, MONGODB_URI
 from simulate.translate import Name
 LANGUAGE = Name(REGION_EXP)
+from simulate.templates import *
 
 
 def update_task_count(task_counts, task_type):
@@ -24,36 +25,7 @@ def update_task_count(task_counts, task_type):
     else:
         task_counts[task_type] = 1
 
-def poi_category_choose(l1_category_code):
-    excluded_ids = ['11', '12', '19', '26', '80','99']
-    if l1_category_code in excluded_ids:
-        return None
-
-    category_supported = {
-        "10": "Cuisine", 
-        "11": "Company Business",
-        "12": "Organization Groups",
-        "13": "Shopping", 
-        "14": "Life Services", 
-        "16": "Entertainment & Leisure", 
-        "18": "Sports & Fitness", 
-        "19": "Automotive", 
-        "20": "Medical & Healthcare", 
-        "21": "Hotels & Guesthouses", 
-        "22": "Tourist Attractions", 
-        "23": "Cultural Venues", 
-        "24": "Education & Schools", 
-        "25": "Banking & Finance", 
-        "26": "Place Names & Addresses",
-        "27": "Infrastructure", 
-        "28": "Real Estate & Communities",
-        "80": "Interior and Related Facilities",
-        "99": "Other"
-    }
-    poi_category_L1 = category_supported[l1_category_code]
-    return poi_category_L1
-
-def construct_dialogues_poi(poi_file, output_file, category_dict_id_name, map, task_counts):
+def construct_dialogues_poi(poi_file, output_file, map, task_counts):
     """构造poi的对话"""
     data = pd.read_csv(poi_file)
     dialogues = []
@@ -62,7 +34,10 @@ def construct_dialogues_poi(poi_file, output_file, category_dict_id_name, map, t
     for index, row in data.iterrows():
         
         poi_name = row['name']
-        poi_address = row['Address']
+        if OSM_ADDRESS == False:
+            poi_address = row['Address']
+        else:
+            poi_address = row['address_osm']
         poi_id = row['poi_id']
 
         # 判断地址、名字信息是否存在
@@ -83,60 +58,16 @@ def construct_dialogues_poi(poi_file, output_file, category_dict_id_name, map, t
         )
         update_task_count(task_counts, "poi_name2addr")
 
-
-        if OSM_REGION == False:
-            # poi一级分类和地址到名字的对话
-            category_code = map.pois[poi_id]['category']
-            l1_category_code = category_code[:2]
-            
-            poi_category_L1 = poi_category_choose(l1_category_code)
-
-            if poi_category_L1 is not None:
-                category_addr2poi_session = [
-                    {"role": "user", "content": category_addr2poi_choose(poi_address, poi_category_L1)},
-                    {"role": "assistant", "content": poi_name}
-                ]
-
-                dialogues.append(
-                    {
-                        "task": "address",
-                        "id": f"{poi_file}-category_addr2poi-{index}",
-                        "diag": category_addr2poi_session
-                    }
-                )
-                update_task_count(task_counts, "category_addr2poi")
-
-            # poi三级分类和地址到名字的对话
-            poi_category_L3 = None
-            if category_code in category_dict_id_name["L3"]:
-                poi_category_L3 = category_dict_id_name["L3"][category_code]
-            else:
-                print(f"警告：分类代码 {category_code} 在字典中不存在。")
-                break 
-
-            session = type_addr2poi_choose(poi_address, l1_category_code, poi_category_L3)
-            if session is not None:
-                type_addr2poi_session = [
-                    {"role": "user", "content": session},
-                    {"role": "assistant", "content": poi_name}
-                ]
-                dialogues.append(
-                    {
-                        "task": "address",
-                        "id": f"{poi_file}-type_addr2poi-{index}",
-                        "diag": type_addr2poi_session
-                    }
-                )
-                update_task_count(task_counts, "type_addr2poi")
-        else:
-            # OSM来源数据的poi分类和地址到名字的对话
-            category_string = map.pois[poi_id]['category']
-            parts = category_string.split('|')
-            category_name = parts[1] if len(parts) > 1 else None
-            if category_name is not None:
-                category_addr2poi_session = [
-                    {"role": "user", "content": category_addr2poi_choose(poi_address, category_name)},
-                    {"role": "assistant", "content": poi_name}
+        # OSM来源数据的poi分类和地址到名字的对话
+        category_name = map.pois[poi_id]['category']
+        category_name = category_name.split(" > ")[0] if " > " in category_name else category_name
+        # category_string = map.pois[poi_id]['category']
+        # parts = category_string.split('|')
+        # category_name = parts[1] if len(parts) > 1 else None
+        if category_name is not None:
+            category_addr2poi_session = [
+                {"role": "user", "content": category_addr2poi_choose(poi_address, category_name)},
+                {"role": "assistant", "content": poi_name}
             ]
 
             dialogues.append(
@@ -151,41 +82,41 @@ def construct_dialogues_poi(poi_file, output_file, category_dict_id_name, map, t
         max_number = 10
         if count_element < max_number:
             count_element += 1
-            
-            pattern = r"inside (?P<aoi_name>[^,]+) on the (?P<aoi_lane_direction>\w+) side of (?P<road_name>.+?), (?P<aoi_s>(?:within )?\d+m) from the (?P<aoi_junc_direction>\w+) corner of (?P<junc_name>the junction of .+)"
-            match = re.match(pattern, poi_address)
-            if match:
-                road_name = match.group('road_name')
-                aoi_lane_direction = match.group('aoi_lane_direction')
-                aoi_name = match.group('aoi_name')
-                junc_name = match.group('junc_name')
-                aoi_junc_direction = match.group('aoi_junc_direction')
-                aoi_s = match.group('aoi_s')
+            if OSM_ADDRESS == False:
+                pattern = r"inside (?P<aoi_name>[^,]+) on the (?P<aoi_lane_direction>\w+) side of (?P<road_name>.+?), (?P<aoi_s>(?:within )?\d+m) from the (?P<aoi_junc_direction>\w+) corner of (?P<junc_name>the junction of .+)"
+                match = re.match(pattern, poi_address)
+                if match:
+                    road_name = match.group('road_name')
+                    aoi_lane_direction = match.group('aoi_lane_direction')
+                    aoi_name = match.group('aoi_name')
+                    junc_name = match.group('junc_name')
+                    aoi_junc_direction = match.group('aoi_junc_direction')
+                    aoi_s = match.group('aoi_s')
 
-                poi_addr_element_session = [
-                    {"role": "user", "content": poi_addr_element_text(poi_address)},
-                    {"role": "assistant", "content": json.dumps({
-                        "road_name": road_name,
-                        "aoi_lane_direction": aoi_lane_direction,
-                        "aoi_name": aoi_name,
-                        "junc_name": junc_name,
-                        "aoi_junc_direction": aoi_junc_direction,
-                        "aoi_s": f"{aoi_s}"
-                    }, ensure_ascii=False)}
-                ]
-                                
-                dialogues.append(
-                    {
-                        "task": "GeoGLUE",
-                        "id": f"{poi_file}-poi_addr_element-{index}",
-                        "diag": poi_addr_element_session
-                    }
-                )
-                update_task_count(task_counts, "poi_addr_element")
-            else:
-                # 对于自行构建地址系统，no match的poi是由于所属aoi没有name，导致格式不符
-                print("poi no match")
-                print(poi_address)         
+                    poi_addr_element_session = [
+                        {"role": "user", "content": poi_addr_element_text(poi_address)},
+                        {"role": "assistant", "content": json.dumps({
+                            "road_name": road_name,
+                            "aoi_lane_direction": aoi_lane_direction,
+                            "aoi_name": aoi_name,
+                            "junc_name": junc_name,
+                            "aoi_junc_direction": aoi_junc_direction,
+                            "aoi_s": f"{aoi_s}"
+                        }, ensure_ascii=False)}
+                    ]
+                                    
+                    dialogues.append(
+                        {
+                            "task": "GeoGLUE",
+                            "id": f"{poi_file}-poi_addr_element-{index}",
+                            "diag": poi_addr_element_session
+                        }
+                    )
+                    update_task_count(task_counts, "poi_addr_element")
+                else:
+                    # 对于自行构建地址系统，no match的poi是由于所属aoi没有name，导致格式不符
+                    print("poi no match")
+                    print(poi_address)         
         
     with jsonlines.open(output_file, mode="w") as wid:
         for dialogue in dialogues:
@@ -195,31 +126,23 @@ def poi_categories_in_aoi(map, poi_ids):
     category_details = {}
 
     for poi_id in poi_ids:
-        if OSM_REGION == True:
-            category_string = map.pois[poi_id]['category']
-            parts = category_string.split('|')
-            category_name = parts[1] if len(parts) > 1 else None
-            if category_name is not None:
-                if category_name in category_details:
-                    category_details[category_name].append(LANGUAGE.get_poi_name(poi_id, map))
-                else:
+        category_name = map.pois[poi_id]['category']
+        category_name = category_name.split(" > ")[0] if " > " in category_name else category_name
+        if category_name is not None or category_name=="":
+            poi_name = LANGUAGE.get_poi_name(poi_id, map)
+            if category_name in category_details:
+                if pd.notna(poi_name):
+                    category_details[category_name].append(poi_name)
+            else:
+                if pd.notna(poi_name):
                     category_details[category_name] = [LANGUAGE.get_poi_name(poi_id, map)]
-        else:
-            category_code = map.pois[poi_id]['category']
-            l1_category_code = category_code[:2]
-            
-            poi_category_L1 = poi_category_choose(l1_category_code)
-            if poi_category_L1 is not None:
-                if poi_category_L1 in category_details:
-                    category_details[poi_category_L1].append(LANGUAGE.get_poi_name(poi_id, map))
-                else:
-                    category_details[poi_category_L1] = [LANGUAGE.get_poi_name(poi_id, map)]
         
     if not category_details: 
         return None, []
 
     max_category = max(category_details, key=lambda k: len(category_details[k]))
     max_category_pois = category_details[max_category]
+    # print(f"max_category: {max_category}, max_category_pois: {max_category_pois}")
 
     return max_category, max_category_pois
 
@@ -237,10 +160,7 @@ def get_nearby_pois(map, aoi_info, interested_categories):
     for category_prefix in interested_categories:
         pois = map.query_pois(center, radius, category_prefix, limit=None)
         if pois:
-            if OSM_REGION == False:
-                poi_category_L1 = poi_category_choose(category_prefix)
-                category_prefix = poi_category_L1
-
+            # poi_category_L1 = poi_category_choose(category_prefix)
             category_pois[category_prefix] = pois
             nearest_pois[category_prefix] = sorted(pois, key=lambda x: x[1])[0]
 
@@ -264,17 +184,14 @@ def get_aoi_with_most_pois(aoi_data, map):
     return max_aoi_name, aoi_poi_counts[max_aoi_id]
 
 
-def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, task_counts):
+def construct_dialogues_aoi(aoi_file, output_file, map, task_counts):
     """构造aoi的对话"""
     data = pd.read_csv(aoi_file)
     dialogues = []
     extra = 'nearby'
     round_demical = 4
     count_element = 0
-    if OSM_REGION == False:
-        interested_categories = ['amenity', 'building', 'leisure']
-    else:
-        interested_categories = ['10', '13', '14', '16', '18', '19', '20', '21', '22', '23', '24', '25', '27', '28']
+    interested_categories = ['Dining and Drinking', 'Business and Professional Services', 'Community and Government', 'Retail', 'Travel and Transportation', 'Arts and Entertainment', 'Health and Medicine', 'Landmarks and Outdoors', 'Sports and Recreation', 'Event']
     max_pois_aoi_name, max_poi_count = get_aoi_with_most_pois(data, map)
     max_area = -1
     max_aoi_name = None
@@ -297,7 +214,10 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
         if extra in str(row['aoi_name']):
             continue
         aoi_name = row['aoi_name']
-        aoi_address = row['Address']
+        if OSM_ADDRESS == False:
+            aoi_address = row['Address']
+        else:
+            aoi_address = row['address_osm']
         aoi_id = row['aoi_id']
         aoi_info = map.aois[aoi_id]
 
@@ -317,14 +237,10 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
             )
             update_task_count(task_counts, "aoi_name2addr")
 
-            if 'urban_land_use' in map.aois[aoi_id] or 'landuse' in map.aois[aoi_id]:
+            if 'urban_land_use' in map.aois[aoi_id]:
                 # aoi用地类型和地址到名字的对话
-                if OSM_REGION == True:
-                    landuse_code = map.aois[aoi_id]['urban_land_use']    
-                    landuse_name = task_template_urban(landuse_code)
-                else:
-                    landuse_code = map.aois[aoi_id]['land_use']    
-                    landuse_name = task_template(landuse_code)
+                landuse_code = map.aois[aoi_id]['urban_land_use']    
+                landuse_name = task_template_urban(landuse_code)
                 if landuse_name is not None:
                     landuse_addr2aoi_session = [
                         {"role": "user", "content": landuse_addr2aoi_choose(aoi_address, landuse_name)},
@@ -340,112 +256,112 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
                     update_task_count(task_counts, "landuse_addr2aoi")
 
             # 哪些路与当前aoi相接
-            if aoi_info['driving_positions']:
-                road_names = set()
-                max_length = 0
-                longest_road_info = None
-                for driving_position in aoi_info['driving_positions']:
-                    lane_id = driving_position['lane_id']
-                    lane_info = map.lanes[lane_id]
-                    road_info = map.roads[lane_info["parent_id"]]
-                    road_name = LANGUAGE.get_road_name(road_info, map)
-                    if not road_name: 
-                        road_name = "unknown road"
-                    road_names.add(road_name)
-                    road_length = road_info['length']
-                    if road_length > max_length:
-                        max_length = road_length
-                        longest_road_info = road_info
-                road_names = ', '.join(road_names)
-                aoi2connected_road_session = [
-                    {"role": "user", "content": aoi2connected_road_choose(aoi_name)},
-                    {"role": "assistant", "content": road_names}
-                ]
-                dialogues.append(
-                    {
-                        "task": "GeoQA",
-                        "id": f"{aoi_file}-aoi2connected_road-{index}",
-                        "diag": aoi2connected_road_session
-                    }
-                )
-                update_task_count(task_counts, "aoi2connected_road")
+            # if aoi_info['driving_positions']:
+            #     road_names = set()
+            #     max_length = 0
+            #     longest_road_info = None
+            #     for driving_position in aoi_info['driving_positions']:
+            #         lane_id = driving_position['lane_id']
+            #         lane_info = map.lanes[lane_id]
+            #         road_info = map.roads[lane_info["parent_id"]]
+            #         road_name = LANGUAGE.get_road_name(road_info, map)
+            #         if not road_name: 
+            #             road_name = "unknown road"
+            #         road_names.add(road_name)
+            #         road_length = road_info['length']
+            #         if road_length > max_length:
+            #             max_length = road_length
+            #             longest_road_info = road_info
+            #     road_names = ', '.join(road_names)
+            #     aoi2connected_road_session = [
+            #         {"role": "user", "content": aoi2connected_road_choose(aoi_name)},
+            #         {"role": "assistant", "content": road_names}
+            #     ]
+            #     dialogues.append(
+            #         {
+            #             "task": "GeoQA",
+            #             "id": f"{aoi_file}-aoi2connected_road-{index}",
+            #             "diag": aoi2connected_road_session
+            #         }
+            #     )
+            #     update_task_count(task_counts, "aoi2connected_road")
 
-                if longest_road_info:
-                    # 与当前aoi相接的最长的道路
-                    longest_road_name = LANGUAGE.get_road_name(longest_road_info, map)
-                    max_length_rounded = round(max_length / min_resolution) * min_resolution
-                    if not longest_road_name: 
-                        # 最长的道路没有名字
-                        continue
-                    aoi2longest_connected_road_session = [
-                        {"role": "user", "content": aoi2longest_connected_road_choose(aoi_name)},
-                        {"role": "assistant", "content": f"{longest_road_name} with {max_length_rounded} meters." }
-                    ]
-                    dialogues.append(
-                        {
-                            "task": "GeoQA",
-                            "id": f"{aoi_file}-aoi2longest_connected_road-{index}",
-                            "diag": aoi2longest_connected_road_session
-                        }
-                    )
-                    update_task_count(task_counts, "aoi2longest_connected_road")
+            #     if longest_road_info:
+            #         # 与当前aoi相接的最长的道路
+            #         longest_road_name = LANGUAGE.get_road_name(longest_road_info, map)
+            #         max_length_rounded = round(max_length / min_resolution) * min_resolution
+            #         if not longest_road_name: 
+            #             # 最长的道路没有名字
+            #             continue
+            #         aoi2longest_connected_road_session = [
+            #             {"role": "user", "content": aoi2longest_connected_road_choose(aoi_name)},
+            #             {"role": "assistant", "content": f"{longest_road_name} with {max_length_rounded} meters." }
+            #         ]
+            #         dialogues.append(
+            #             {
+            #                 "task": "GeoQA",
+            #                 "id": f"{aoi_file}-aoi2longest_connected_road-{index}",
+            #                 "diag": aoi2longest_connected_road_session
+            #             }
+            #         )
+            #         update_task_count(task_counts, "aoi2longest_connected_road")
 
-            # aoi面积的对话
-            if 'area' in aoi_info:
-                area = aoi_info['area']
-                rounded_area = round(area)
-                aoi_area_session = [
-                    {"role": "user", "content": aoi_area_choose(aoi_name)},
-                    {"role": "assistant", "content": f"{rounded_area} square meters."}
-                ]
-                dialogues.append(
-                    {
-                        "task": "GeoQA",
-                        "id": f"{aoi_file}-aoi_area-{index}",
-                        "diag": aoi_area_session
-                    }
-                )
-                update_task_count(task_counts, "aoi_area")
-                if area > max_area:
-                    max_area = area
-                    max_aoi_name = aoi_name
+            # # aoi面积的对话
+            # if 'area' in aoi_info:
+            #     area = aoi_info['area']
+            #     rounded_area = round(area)
+            #     aoi_area_session = [
+            #         {"role": "user", "content": aoi_area_choose(aoi_name)},
+            #         {"role": "assistant", "content": f"{rounded_area} square meters."}
+            #     ]
+            #     dialogues.append(
+            #         {
+            #             "task": "GeoQA",
+            #             "id": f"{aoi_file}-aoi_area-{index}",
+            #             "diag": aoi_area_session
+            #         }
+            #     )
+            #     update_task_count(task_counts, "aoi_area")
+            #     if area > max_area:
+            #         max_area = area
+            #         max_aoi_name = aoi_name
         
-            # 距离aoi1公里范围内的xx类型的poi
-            category_pois, nearest_pois = get_nearby_pois(map, aoi_info, interested_categories)
-            # 满足构造对话条件的最少特定xx类型的poi数量
-            min_poi_count = 5
-            if category_pois is not None:
-                for category, pois in category_pois.items():
-                    if len(pois) > min_poi_count:
-                        poi_names = ', '.join([poi[0]['name'] for poi in pois])
-                        aoi_range_category2poi_session = [
-                            {"role": "user", "content": aoi_range_category2poi_choose(aoi_address, category)},
-                            {"role": "assistant", "content": poi_names}
-                        ]
-                        dialogues.append(
-                            {
-                                "task": "GeoQA",
-                                "id": f"{aoi_file}-aoi_range_category2poi-{index}",
-                                "diag": aoi_range_category2poi_session
-                            }
-                        )
-                        update_task_count(task_counts, "aoi_range_category2poi")
-                        # 距离aoi最近的L1类型的poi
-                        nearest_poi = nearest_pois[category]
-                        aoi_category2nearest_poi_session = [
-                            {"role": "user", "content": aoi_category2nearest_poi_choose(aoi_address, category)},
-                            {"role": "assistant", "content": nearest_poi[0]['name']}
-                        ]
-                        dialogues.append(
-                            {
-                                "task": "GeoQA",
-                                "id": f"{aoi_file}-aoi_category2nearest_poi-{index}",
-                                "diag": aoi_category2nearest_poi_session
-                            }
-                        )
-                        update_task_count(task_counts, f"aoi_category2nearest_poi")
-            else:
-                print(f"No POIs found within 1000 meters for any category at {aoi_name}.") 
+            # # 距离aoi1公里范围内的xx类型的poi
+            # category_pois, nearest_pois = get_nearby_pois(map, aoi_info, interested_categories)
+            # # 满足构造对话条件的最少特定xx类型的poi数量
+            # min_poi_count = 5
+            # if category_pois is not None:
+            #     for category, pois in category_pois.items():
+            #         if len(pois) > min_poi_count:
+            #             poi_names = ', '.join([poi[0]['name'] for poi in pois])
+            #             aoi_range_category2poi_session = [
+            #                 {"role": "user", "content": aoi_range_category2poi_choose(aoi_address, category)},
+            #                 {"role": "assistant", "content": poi_names}
+            #             ]
+            #             dialogues.append(
+            #                 {
+            #                     "task": "GeoQA",
+            #                     "id": f"{aoi_file}-aoi_range_category2poi-{index}",
+            #                     "diag": aoi_range_category2poi_session
+            #                 }
+            #             )
+            #             update_task_count(task_counts, "aoi_range_category2poi")
+            #             # 距离aoi最近的L1类型的poi
+            #             nearest_poi = nearest_pois[category]
+            #             aoi_category2nearest_poi_session = [
+            #                 {"role": "user", "content": aoi_category2nearest_poi_choose(aoi_address, category)},
+            #                 {"role": "assistant", "content": nearest_poi[0]['name']}
+            #             ]
+            #             dialogues.append(
+            #                 {
+            #                     "task": "GeoQA",
+            #                     "id": f"{aoi_file}-aoi_category2nearest_poi-{index}",
+            #                     "diag": aoi_category2nearest_poi_session
+            #                 }
+            #             )
+            #             update_task_count(task_counts, f"aoi_category2nearest_poi")
+            # else:
+            #     print(f"No POIs found within 1000 meters for any category at {aoi_name}.") 
 
 
         if not pd.isnull(aoi_address):   
@@ -479,7 +395,8 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
                 }
             )
             update_task_count(task_counts, "aoi_coords2addr")
-
+        else:
+            print(f"No address found for {aoi_name}. so no aoi_coords2addr dialogue is constructed.")
         # junc地址到地理坐标的对话
         if aoi_info['driving_positions']:
             flag=0
@@ -511,35 +428,38 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
             if selected_next_road_name is None:
                 selected_next_road_name = next_road_names.pop()
             
-            junc_name = f"the junction of {next_road_name} and {road_name}"
+            junc_name = f"the junction of {selected_next_road_name} and {road_name}"
             junc_lng, junc_lat = map.xy2lnglat(junc_point.x, junc_point.y)
             junc_lng, junc_lat = round(junc_lng, round_demical), round(junc_lat, round_demical)
             junc_addr2coords_session = [
                 {"role": "user", "content": junc_addr2coords_choose(junc_name)},
                 {"role": "assistant", "content": f"({junc_lng}, {junc_lat})"}
             ]
-            dialogues.append(
-                {
-                    "task": "address",
-                    "id": f"{aoi_file}-junc_addr2coords-{index}",
-                    "diag": junc_addr2coords_session
-                }
-            )
-            update_task_count(task_counts, "junc_addr2coords")
+            if road_name == "unknown road" and selected_next_road_name == "unknown road":
+                pass
+            else:
+                dialogues.append(
+                    {
+                        "task": "address",
+                        "id": f"{aoi_file}-junc_addr2coords-{index}",
+                        "diag": junc_addr2coords_session
+                    }
+                )
+                update_task_count(task_counts, "junc_addr2coords")
 
-            # junc地理坐标到地址的对话
-            junc_coords2addr_session = [
-                {"role": "user", "content": junc_coords2addr_choose(junc_lng, junc_lat)},
-                {"role": "assistant", "content": junc_name}
-            ]
-            dialogues.append(
-                {
-                    "task": "address",
-                    "id": f"{aoi_file}-junc_coords2addr-{index}",
-                    "diag": junc_coords2addr_session
-                }
-            )
-            update_task_count(task_counts, "junc_coords2addr")
+                # junc地理坐标到地址的对话
+                junc_coords2addr_session = [
+                    {"role": "user", "content": junc_coords2addr_choose(junc_lng, junc_lat)},
+                    {"role": "assistant", "content": junc_name}
+                ]
+                dialogues.append(
+                    {
+                        "task": "address",
+                        "id": f"{aoi_file}-junc_coords2addr-{index}",
+                        "diag": junc_coords2addr_session
+                    }
+                )
+                update_task_count(task_counts, "junc_coords2addr")
 
             # 构造相邻路口距离的对话
             if flag==1:
@@ -551,21 +471,24 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
                 if suc_selected_next_road_name is None:
                     suc_selected_next_road_name = suc_next_road_names.pop()
                 
-                suc_junc_name = f"the junction of {road_name} and {suc_next_road_name}"               
+                suc_junc_name = f"the junction of {road_name} and {suc_selected_next_road_name}"               
                 distance = calculate_distance(junc_point, suc_junc_point)
                 distance_rounded = round(distance / min_resolution) * min_resolution
                 junc_distance_session = [
                     {"role": "user", "content":junc_distance_choose(junc_name, suc_junc_name)},
                     {"role": "assistant", "content": f"{distance_rounded} meters"}
                 ]
-                dialogues.append(
-                    {
-                        "task": "address",
-                        "id": f"{aoi_file}-junc_distance-{index}",
-                        "diag": junc_distance_session
-                    }
-                )
-                update_task_count(task_counts, "junc_distance")
+                if road_name == "unknown road" and suc_selected_next_road_name == "unknown road":
+                    pass
+                else:
+                    dialogues.append(
+                        {
+                            "task": "address",
+                            "id": f"{aoi_file}-junc_distance-{index}",
+                            "diag": junc_distance_session
+                        }
+                    )
+                    update_task_count(task_counts, "junc_distance")
 
                 # 构造相邻路口方向的对话
                 angle = cal_angle(junc_point, suc_junc_point)
@@ -574,14 +497,17 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
                     {"role": "user", "content": junc_direction_choose(junc_name, suc_junc_name)},
                     {"role": "assistant", "content": f"{junc_direction}"}
                 ]
-                dialogues.append(
-                    {
-                        "task": "address",
-                        "id": f"{aoi_file}-junc_direction-{index}",
-                        "diag": junc_direction_session
-                    }
-                )
-                update_task_count(task_counts, "junc_direction")
+                if road_name == "unknown road" and suc_selected_next_road_name == "unknown road":
+                    pass
+                else:
+                    dialogues.append(
+                        {
+                            "task": "address",
+                            "id": f"{aoi_file}-junc_direction-{index}",
+                            "diag": junc_direction_session
+                        }
+                    )
+                    update_task_count(task_counts, "junc_direction")
 
         if 'poi_ids' in aoi_info and aoi_info['poi_ids']:
             poi_ids = aoi_info['poi_ids']
@@ -597,19 +523,15 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
                     dialogues.append(
                         {
                             "task": "GeoQA",
-                            "id": f"{aoi_file}-aoi_category2poi-{index}-{max_category}",
+                            "id": f"{aoi_file}-aoi_category2poi-{index}",
                             "diag": aoi_category2poi_session
                         }
                     )
                     update_task_count(task_counts, "aoi_category2poi")
 
                     # aoi_landuse类型到所包含poi类型的对话
-                    if OSM_REGION == True:
-                        landuse_code = aoi_info['urban_land_use']
-                        landuse_name = task_template_urban(landuse_code)
-                    else:
-                        landuse_code = aoi_info['land_use']
-                        landuse_name = task_template(landuse_code)
+                    landuse_code = aoi_info['urban_land_use']
+                    landuse_name = task_template_urban(landuse_code)
                     if landuse_name is not None:
                         aoi_laneuse2poi_category_session = [
                             {"role": "user", "content": aoi_landuse2poi_category_choose(aoi_name, landuse_name)},
@@ -662,40 +584,41 @@ def construct_dialogues_aoi(aoi_file, output_file, category_dict_id_name, map, t
                     update_task_count(task_counts, "poi2adjacency_pois")
             
         # aoi门址地址元素分析，仅适用于自行构建地址系统
-        if not pd.isnull(aoi_address):
-            max_number = 10
-            if count_element < max_number:
-                count_element += 1
-                pattern = r"on the (?P<aoi_lane_direction>\w+) side of (?P<road_name>.+?), (?P<aoi_s>(?:within )?\d+m) from the (?P<aoi_junc_direction>\w+) corner of (?P<junc_name>the junction of .+)"
-                match = re.match(pattern, aoi_address)
+        if OSM_ADDRESS == False:
+            if not pd.isnull(aoi_address):
+                max_number = 10
+                if count_element < max_number:
+                    count_element += 1
+                    pattern = r"on the (?P<aoi_lane_direction>\w+) side of (?P<road_name>.+?), (?P<aoi_s>(?:within )?\d+m) from the (?P<aoi_junc_direction>\w+) corner of (?P<junc_name>the junction of .+)"
+                    match = re.match(pattern, aoi_address)
 
-                if match:
-                    aoi_lane_direction = match.group('aoi_lane_direction')
-                    aoi_junc_direction = match.group('aoi_junc_direction')
-                    aoi_s = match.group('aoi_s')
-                    
+                    if match:
+                        aoi_lane_direction = match.group('aoi_lane_direction')
+                        aoi_junc_direction = match.group('aoi_junc_direction')
+                        aoi_s = match.group('aoi_s')
+                        
 
-                    aoi_addr_element_session = [
-                        {"role": "user", "content": aoi_addr_element_text(aoi_address)},
-                        {"role": "assistant", "content": json.dumps({
-                            "road_name": road_name,
-                            "aoi_lane_direction": aoi_lane_direction,
-                            "junc_name": junc_name,
-                            "aoi_junc_direction": aoi_junc_direction,
-                            "aoi_s": f"{aoi_s}"
-                        }, ensure_ascii=False)}
-                    ]
-                    dialogues.append(
-                        {
-                            "task": "GeoGLUE",
-                            "id": f"{aoi_file}-aoi_addr_element-{index}",
-                            "diag": aoi_addr_element_session
-                        }
-                    )
-                    update_task_count(task_counts, "aoi_addr_element")
-                else:
-                    print("aoi no match")
-                    print(aoi_address)
+                        aoi_addr_element_session = [
+                            {"role": "user", "content": aoi_addr_element_text(aoi_address)},
+                            {"role": "assistant", "content": json.dumps({
+                                "road_name": road_name,
+                                "aoi_lane_direction": aoi_lane_direction,
+                                "junc_name": junc_name,
+                                "aoi_junc_direction": aoi_junc_direction,
+                                "aoi_s": f"{aoi_s}"
+                            }, ensure_ascii=False)}
+                        ]
+                        dialogues.append(
+                            {
+                                "task": "GeoGLUE",
+                                "id": f"{aoi_file}-aoi_addr_element-{index}",
+                                "diag": aoi_addr_element_session
+                            }
+                        )
+                        update_task_count(task_counts, "aoi_addr_element")
+                    else:
+                        print("aoi no match")
+                        print(aoi_address)
 
     # aoi最大面积的对话
     max_aoi_area_session = [
@@ -852,7 +775,8 @@ def selected_data(input_file, output_file, max_samples_per_category=1000):
     """对数据进行随机抽取以减少数据量"""
     categories = {}
     # excluded_types中为GeoQA总结出的对话，需在评测中体现，暂时去除
-    excluded_types = {'aoi_category2poi', 'max_pois_aoi', 'aoi_range_category2poi', 'aoi_category2nearest_poi', 'aoi2connected_road', 'aoi2longest_connected_road', 'poi2adjacency_pois', 'aoi_area', 'max_aoi_area', 'road2connected_2aois'}
+    ### 20250107进行，暂时去除poi_name2addr, aoi_name2addr
+    excluded_types = {'aoi_category2poi', 'max_pois_aoi', 'aoi_range_category2poi', 'aoi_category2nearest_poi', 'aoi2connected_road', 'aoi2longest_connected_road', 'poi2adjacency_pois', 'aoi_area', 'max_aoi_area', 'road2connected_2aois', 'poi_name2addr', 'aoi_name2addr'}
     # 读取数据并按从ID中解析出的任务类型分组
     with jsonlines.open(input_file) as reader:
         for obj in reader:
@@ -883,11 +807,20 @@ def selected_data(input_file, output_file, max_samples_per_category=1000):
 async def main(args):
     city_map = MAP_DICT[REGION_EXP]
     port = args.port if args.port is not None else MAP_PORT_DICT[REGION_EXP]
-    m, process, routing_client = load_map(
-        city_map=city_map, 
-        cache_dir=MAP_CACHE_PATH, 
-        routing_path=ROUTING_PATH, 
-        port=port)
+    if args.parallel:
+        m = Map(
+            mongo_uri=f"{MONGODB_URI}",
+            mongo_db="srt",
+            mongo_coll=city_map,
+            cache_dir=MAP_CACHE_PATH,
+        )
+        routing_client = RoutingClient(f"localhost:{port}")
+    else:
+        m, process, routing_client = load_map(
+            city_map=city_map, 
+            cache_dir=MAP_CACHE_PATH, 
+            routing_path=ROUTING_PATH, 
+            port=port)
 
     random.seed(42)
     task_counts = {}  
@@ -906,9 +839,8 @@ async def main(args):
     else:
         road_file = args.input_roads_file
     
-    category_dict_name_id, category_dict_id_name = load_poi_category_dict()
-    construct_dialogues_poi(poi_file, args.output_file, category_dict_id_name, m, task_counts)
-    construct_dialogues_aoi(aoi_file, args.output_file, category_dict_id_name, m, task_counts)
+    construct_dialogues_poi(poi_file, args.output_file, m, task_counts)
+    construct_dialogues_aoi(aoi_file, args.output_file, m, task_counts)
     await construct_dialogues_routes(args.input_file, args.output_file, m, routing_client, min_road_length, task_counts)
     construct_dialogues_road(road_file, args.output_file, m, task_counts)
     if args.random_selected:
@@ -921,13 +853,31 @@ async def main(args):
     for task_type, count in task_counts.items():
         print(f"{task_type}: {count}")
 
-    print("send signal")
-    process.send_signal(sig=signal.SIGTERM)
-    process.wait()
+    if not args.parallel:
+        print("send signal")
+        process.send_signal(sig=signal.SIGTERM)
+        process.wait()
 
 
 
 if __name__ == "__main__":
+
+    # v1.1- address 针对poi, 构建了name2addr、(category+addr)2poi、(type+addr)2poi三类对话
+    # v1.2- address 针对aoi, 构建了name2addr、(landuse+addr)2aoi两类对话
+    # v2.1- address 针对aoi, 构建了landuse2poi_category、poi_category2landuse、addr2coords、coords2addr四类对话
+    # v2.2- address 针对junc, 构建了addr2coords、coords2addr两类对话
+    # v2.3- address 针对route, 构建了scrambled_task_route、lacking_task_route两类对话
+    # v2.4- address 针对junc, 构建了distance、direction两类对话
+    # v3.1- GeoGLUE 针对poi, 构建了addr_element对话
+    # v3.2- GeoGLUE 针对aoi, 构建了ddr_element对话
+    # v4.1- GeoQA 针对aoi, 构建了(aoi+{max_category})2poi、max_pois2aoi、(aoi+range+categoey)2poi、(aoi+category)2nearest_poi、aoi2connected_road、aoi2longest_connected_road、aoi_area、max_aoi_area类对话
+    # v4.2- GeoQA 针对poi, 构建了poi2adjacency_pois对话
+    # v4.3- GeoQA 针对road, 构建了road2connected_2aois对话
+    # v5- all 构建模板泛化
+    # v6- all 增加中英文两个版本选择
+    # v7- all 增加并行代码 run_address_data_parallel.py
+    # v8- all 增加抽样代码 
+    # v9- all 兼容osm来源数据
 
 
     parser = argparse.ArgumentParser()
@@ -938,6 +888,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_aois_file", default="")
     parser.add_argument("--input_roads_file", default="")
     parser.add_argument("--random_selected", action="store_true", help="控制是否进行随机抽取的参数，不设置即不抽取，设置即抽取")
+    parser.add_argument("--parallel", action="store_true", help="控制是否并行执行的参数，不设置即不并行，设置即并行")
     parser.add_argument("--port", type=int)
     args = parser.parse_args()
 

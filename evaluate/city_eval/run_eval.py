@@ -13,7 +13,7 @@ from openai import OpenAI
 import httpx
 import random
 
-from config import EVAL_TASK_MAPPING_v1, EVAL_TASK_MAPPING_v2, REGION_EXP
+from config import EVAL_TASK_MAPPING_v1, EVAL_TASK_MAPPING_v2
 from .utils import get_chat_completion, extract_choice
 
 
@@ -84,7 +84,7 @@ def format_example(line, include_answer=True, max_choices=4, fewshot=FEW_SHOT_PR
     return example 
 
 ###################### 评估接口
-def run_evaluate_api(task_file_path, model_name, max_validation, temperature, max_tokens, fewshot, inlcude_answer_prompt_final, multi_round, region_exp="wudaokou_small", evaluate_version="v1"):
+def run_evaluate_api(task_name, task_file_path, model_name, max_validation, temperature, max_tokens, fewshot, inlcude_answer_prompt_final, multi_round, region_exp="wudaokou_small", evaluate_version="v1"):
     test_df = pd.read_csv(task_file_path, header=0)
 
     columns = test_df.columns.to_list()
@@ -100,7 +100,7 @@ def run_evaluate_api(task_file_path, model_name, max_validation, temperature, ma
         max_choices = 2
     
     # 只随机取一部分进行测试，设置随机种子保证可复现
-    if test_df.shape[0]>max_validation*2:
+    if test_df.shape[0]>max_validation:
         test_df = test_df.sample(max_validation, random_state=42)
     # test_df = test_df.sample(max_validation, random_state=42)
     
@@ -118,7 +118,7 @@ def run_evaluate_api(task_file_path, model_name, max_validation, temperature, ma
                 multi_round=multi_round,
                 task_name=task_name
                 )
-            question = question[:2000]
+            
             output = get_chat_completion(
                 session=[{"role":"user", "content": question}], 
                 model_name=model_name, temperature=temperature, max_tokens=max_tokens
@@ -141,7 +141,6 @@ def run_evaluate_api(task_file_path, model_name, max_validation, temperature, ma
                 multi_round=multi_round,
                 task_name=task_name
                 )
-            question1 = question1[:1900]
             round1 = [{"role":"user", "content": question1+"\nTo answer the question, please think about the navigation instruction about two locations."}]
             output1 = get_chat_completion(
                 session=round1, 
@@ -171,7 +170,7 @@ def run_evaluate_api(task_file_path, model_name, max_validation, temperature, ma
             else:
                 extract = extract_choice(output, ["A", "B", "C", "D", "E", "F","G","H"]) 
 
-            round_final = round3 + [{"role":"aisstant", "content": output}, {"role":"ref", "content": row["answer"]}, {"role":"extract", "content": extract}]
+            round_final = round3 + [{"role":"assistant", "content": output}, {"role":"ref", "content": row["answer"]}, {"role":"extract", "content": extract}]
             
             res.append(round_final)
 
@@ -199,8 +198,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", type=str, default="chatglm3-v21.4:23130")
-    parser.add_argument("--city_eval_version", type=str, default="v1")
-    parser.add_argument("--max_tokens", default=500, type=int)
+    parser.add_argument("--region_exp", type=str, default="Beijing")
+    parser.add_argument("--city_eval_version", type=str, default="v2.1")
+    parser.add_argument("--max_tokens", default=100, type=int)
     parser.add_argument("--temperature", default=0, type=float)
     parser.add_argument("--max_valid", type=int, default=1)
     parser.add_argument("--fewshot", action="store_true")
@@ -210,7 +210,6 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=1, help="与eval_parallel共同使用, 决定进程数")
     args = parser.parse_args()
     res_df = []
-
     # 定义测试方式，是否使用fewshot
     fewshot_mapping = {
         "dis": FEW_SHOT_PROMPT_SHORT_DIS,
@@ -218,14 +217,17 @@ if __name__ == "__main__":
         }
     print("testing mode:", "fewshot" if args.fewshot else "zeroshot")
 
-    if REGION_EXP == "wudaokou_small" or REGION_EXP == "wudaokou_large" or REGION_EXP == "yuyuantan" or REGION_EXP == "dahongmen" or REGION_EXP == "beijing" or REGION_EXP == "wangjing":
-        EVAL_TASK_MAPPING = EVAL_TASK_MAPPING_v2
-    else:
-        if args.city_eval_version == "v1":
-            EVAL_TASK_MAPPING = EVAL_TASK_MAPPING_v1
-        elif args.city_eval_version == "v2":
-            EVAL_TASK_MAPPING = EVAL_TASK_MAPPING_v2
+    REGION_EXP = args.region_exp
+    # if REGION_EXP == "wudaokou_small" or REGION_EXP == "wudaokou_large" or REGION_EXP == "yuyuantan" or REGION_EXP == "dahongmen" or REGION_EXP == "Beijing" or REGION_EXP == "wangjing":
+    #     EVAL_TASK_MAPPING = EVAL_TASK_MAPPING_v2
+    # else:
+    #     if args.city_eval_version == "v1":
+    #         EVAL_TASK_MAPPING = EVAL_TASK_MAPPING_v1
+    #     elif args.city_eval_version == "v2":
+    #         EVAL_TASK_MAPPING = EVAL_TASK_MAPPING_v2
 
+    ### change by lth on 20250111
+    EVAL_TASK_MAPPING = EVAL_TASK_MAPPING_v2
     task_path = "evaluate/city_eval/tasks/{}/{}".format(REGION_EXP, args.city_eval_version)
     NEW_TASK_FILES = task_files_adaption(EVAL_TASK_MAPPING, task_path)
 
@@ -258,6 +260,7 @@ if __name__ == "__main__":
                             args.multi_round = False
                     
                     para_group.append((
+                        task_name,
                         file_path,
                         model,
                         args.max_valid,
@@ -298,6 +301,7 @@ if __name__ == "__main__":
                             args.multi_round = False
                     
                     res = run_evaluate_api(
+                        task_name,
                         file_path,
                         model,
                         args.max_valid,

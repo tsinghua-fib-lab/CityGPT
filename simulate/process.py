@@ -12,7 +12,7 @@ from config import EVAL_DATA, LANDMARK_DATA
 def main(log_file_name, output_file_name):
     """从历史日志中拼接出对话数据，原版数据忘记存储……"""
     data = []
-    with jsonlines.open("./logs/{}".format(log_file_name)) as fid:
+    with jsonlines.open("simulate/logs/{}".format(log_file_name)) as fid:
         for obj in fid:
             info = [obj["done"], obj["final_reason"], obj["task"]]
             data.append(info)
@@ -24,7 +24,7 @@ def main(log_file_name, output_file_name):
     example = get_prompts("buy")
     example[0] = "Here is one example.\n" + example[0]
 
-    with jsonlines.open("./logs/{}".format(log_file_name)) as fid:
+    with jsonlines.open("simulate/logs/{}".format(log_file_name)) as fid:
         for i, obj in enumerate(fid):
             if obj["done"]:
                 session = []

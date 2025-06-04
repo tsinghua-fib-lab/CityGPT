@@ -10,14 +10,14 @@ import jsonlines
 from typing import List
 from aiomultiprocess import Pool
 
-from pycitysim.map import Map
-from pycitysim.routing import RoutingClient
+from pycitydata.map import Map
+from citysim.routing import RoutingClient
 
 from simulate.player import TextPlayer
 from simulate.utils import RunMode, Action, lnglat2grid, load_map, process_action, simplify_observation_pois
 from simulate.prompts import get_prompts, get_system_instruction, get_available_actions
 from simulate.templates import init_prompt_text
-from config import REGION_EXP, DETAIL_INTEREST, VISION_DATA, MAP_CACHE_PATH, ROUTING_PATH, MAP_DICT, MAP_PORT_DICT, MIN_ROAD_LENGTH, OSM_REGION, MONGODB_URI
+from config import REGION_EXP, DETAIL_INTEREST, VISION_DATA, MAP_CACHE_PATH, ROUTING_PATH, MAP_DICT, MAP_PORT_DICT, MIN_ROAD_LENGTH, MONGODB_URI
 
 def inject_info(session: List, history: List):
     current_role = "user"
@@ -37,7 +37,7 @@ async def main(args):
     nearby_params = args.nearby_params
     input_file_name = args.input_file
     output_file_name = args.output_file
-    workers = args.workers  
+    workers = args.workers
 
     city_map = MAP_DICT[REGION_EXP]
     port = args.port if args.port is not None else MAP_PORT_DICT[REGION_EXP]
@@ -49,28 +49,25 @@ async def main(args):
             cache_dir=MAP_CACHE_PATH,
         )
         routing_client = RoutingClient("localhost:{}".format(port))
-
     else:
         m, process, routing_client = load_map(
             city_map=city_map, 
             cache_dir=MAP_CACHE_PATH, 
             routing_path=ROUTING_PATH, 
             port=port)
-
-        await asyncio.sleep(10)
+        await asyncio.sleep(20)
 
     # 限制最短路径长度
     min_road_length = MIN_ROAD_LENGTH
 
     if REGION_EXP == "example":
-        
         last_time = time.time()
         task_info = {
-            "goal": "xxxx", 
+            "goal": "松下电器(红星美凯龙北四环店)", 
             "poi_id": 700907209, 
             "init_aoi": 500116476, 
             "init_poi": 700559061, 
-            "task": "You are in xxx and you need to go to xxxxx. Your current position is longitude:116.3660 latitude:39.9715.",
+            "task": "You are in 北太平庄中路甲43号院 and you need to go to 松下电器(红星美凯龙北四环店). Your current position is longitude:116.3660 latitude:39.9715.",
             "region": "wudaokou", 
             "type": "citywalk"
             }
@@ -147,19 +144,12 @@ async def main(args):
 async def single_run_city_walk(task_info: dict, m: Map, routing_client: RoutingClient, model_name: str, to_print=True, min_road_length=100, nearby_params={"radius": 100, "limit": 10, "has_category": True}):
     init_aoi_id = task_info["init_aoi"]
     region_exp = task_info["region"]
-    if OSM_REGION == True:
-        current_task = {"task": task_info["task"], "goal": task_info["goal"], "init_aoi": task_info["init_aoi"]}
-        env = TextPlayer(m, routing_client, init_aoi_id, min_road_length, region_exp, nearby_params=nearby_params)
-        env.reset()
-        env.set_max_episode_length(20)
-        env.register_aoi_info(aoi_name=task_info["goal"], aoi_id=task_info["aoi_id"])
-    else:
-        init_poi_id = task_info["init_poi"]
-        current_task = {"task": task_info["task"], "goal": task_info["goal"], "init_poi": task_info["init_poi"]}
-        env = TextPlayer(m, routing_client, init_aoi_id, min_road_length, region_exp, nearby_params=nearby_params, init_poi_id=init_poi_id)
-        env.reset()
-        env.set_max_episode_length(20)
-        env.register_poi_info(poi_name=task_info["goal"], poi_id=task_info["poi_id"])
+    init_poi_id = task_info["init_poi"]
+    current_task = {"task": task_info["task"], "goal": task_info["goal"], "init_poi": task_info["init_poi"]}
+    env = TextPlayer(m, routing_client, init_aoi_id, min_road_length, region_exp, nearby_params=nearby_params, init_poi_id=init_poi_id)
+    env.reset()
+    env.set_max_episode_length(20)
+    env.register_poi_info(poi_name=task_info["goal"], poi_id=task_info["poi_id"])
 
     log_info = {"log": []}
 
@@ -182,31 +172,31 @@ async def single_run_city_walk(task_info: dict, m: Map, routing_client: RoutingC
     for i in range(0, env.max_episode_length):
         if i==0:
             output = "ACTION: {} {}.".format(Action.NAVIGATE.value, current_task["goal"])
-            if OSM_REGION == True:
-                session.append({"role":"assistant", "content": "start from {} ".format(current_task["init_aoi"])+output})
-            else:
-                session.append({"role":"assistant", "content": "start from {} ".format(current_task["init_poi"])+output})
         else:
             output = "ACTION: {} {}".format(Action.WALK.value, current_task["goal"])
+        
+        if i==0:
+            session.append({"role":"assistant", "content": "start from {} ".format(current_task["init_poi"])+output})
+        else:
             session.append({"role":"assistant", "content": output})
 
         available_actions = env.get_action_space(run_mode=RunMode.CITY_WALK.value, goal=current_task["goal"])
         action_object = process_action(output, available_actions)
 
         # 测试时去除try-except
-        # observation, reward, done, info = await env.step(action_object, run_mode=RunMode.CITY_WALK.value, detail_interest=DETAIL_INTEREST)   
+        observation, reward, done, info = await env.step(action_object, run_mode=RunMode.CITY_WALK.value, detail_interest=DETAIL_INTEREST)   
         
-        try:
-            observation, reward, done, info = await env.step(action_object, run_mode=RunMode.CITY_WALK.value, detail_interest=DETAIL_INTEREST)
-        except NotImplementedError as e:
-            done= False
-            final_reason = "NotImplementedError"+" "+str(e)
-            session.append({"role": "user", "content": final_reason + "thus nothing happens."})
-            continue
-        except Exception as e:
-            done = False
-            final_reason = "Unknown"+" "+str(e)
-            break
+        # try:
+        #     observation, reward, done, info = await env.step(action_object, run_mode=RunMode.CITY_WALK.value, detail_interest=DETAIL_INTEREST)
+        # except NotImplementedError as e:
+        #     done= False
+        #     final_reason = SampleStatus.AGENT_INVALID_ACTION.value
+        #     session.append({"role": "user", "content": final_reason + "thus nothing happens."})
+        #     continue
+        # except Exception as e:
+        #     done = False
+        #     final_reason = SampleStatus.UNKNOWN.value+" "+str(e)
+        #     break
         
         
         # 将环境反馈信息以user视角加入对话历史
@@ -276,7 +266,7 @@ if __name__ == "__main__":
     parser.add_argument("--nearby_has_category", default=1, type=int)
     parser.add_argument("--input_file", default="simulate/tasks/input_citywalk_wudaokou_small-v10.3-english-chinese-test.jsonl")
     parser.add_argument("--output_file", default="simulate/logs/output_citywalk_wudaokou-english-chinese-test.jsonl")
-    parser.add_argument("--workers", action="store_true", help="是否使用多进程，不设置则使用单进程")
+    parser.add_argument("--workers", action="store_true", help="是否使用多进程")
     parser.add_argument("--port", type=int)
     args = parser.parse_args()
 

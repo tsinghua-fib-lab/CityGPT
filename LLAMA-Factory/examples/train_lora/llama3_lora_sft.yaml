@@ -1,0 +1,41 @@
+### model
+model_name_or_path: /data1/citygpt/init_ckpt/llama3/Meta-Llama-3-8B-Instruct
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+
+### dataset
+dataset: citygpt-citywalk-v11-cwm-v22.4-newyork-multistyle-v6-ny
+template: llama3
+cutoff_len: 4096
+max_samples: 1000
+overwrite_cache: true
+preprocessing_num_workers: 64
+
+### output
+output_dir: /data1/fengjie/model_zoo/llama3-8B-v83-test-packing-20240726/
+logging_steps: 10
+save_steps: 1000
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+packing: true
+neat_packing: true
+
+### eval
+val_size: 0.1
+per_device_eval_batch_size: 1
+eval_strategy: "no"
+eval_steps: 500

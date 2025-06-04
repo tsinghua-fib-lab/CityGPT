@@ -11,21 +11,20 @@ from openai import OpenAI
 from math import sin, cos, atan2, pi
 
 from pycitydata.map import Map
-from pycitysim.routing import RoutingClient
+from citysim.routing import RoutingClient
 
 from config import MONGODB_URI, PROXY,LLM_MODEL_MAPPING, INFER_SERVER, SERVER_IP, LOCAL_MODEL_KEY
 
-OPENAI_APIKEY = os.environ["OpenAI_API_KEY"]
-DEEPINFRA_APIKEY = os.environ["DeepInfra_API_KEY"]
-SILICONFLOW_APIKEY = os.environ["SiliconFlow_API_KEY"]
-DEEPSEEK_APIKEY = ""
-DEEPBRICKS_APIKEY = os.environ["DeepBricks_API_KEY"]
-
+OPENAI_APIKEY = os.getenv("OpenAI_API_KEY", "")
+DEEPINFRA_APIKEY = os.getenv("DeepInfra_API_KEY", "")
+SILICONFLOW_APIKEY = os.getenv("SiliconFlow_API_KEY", "")
+DEEPSEEK_APIKEY = os.getenv("DeepSeek_API_KEY", "")
+DEEPBRICKS_APIKEY = os.getenv("DeepBricks_API_KEY", "")
 primary_directions = ['east', 'south', 'west', 'north']
 secondary_directions = ['southeast', 'northeast', 'southwest', 'northwest']
 EW = {'east', 'west'}
 NS = {'south', 'north'}
-dir_map = {"north": "south-north", "south": "south-north", "west": "east-west", "east": "east-west"}
+dir_map = {"north": "east-west", "south": "east-west", "west": "south-north", "east": "south-north"}
 dir_map2 = {"south-north": "east-west", "east-west": "south-north"}
 
 secondary_dir_to_primary_dirs = {
@@ -95,7 +94,7 @@ def dir_all_dis(routes, secondary_directions, primary_directions,secondary_dir_t
     for cnt2, direction in enumerate(directions):
         if direction in secondary_directions:
             distance = int(distances[cnt2]) * 0.7
-            distance_str = str(distances[cnt2]) + "m,equals to ({},{}m) and ({},{}m)".format(direction[0],
+            distance_str = str(distances[cnt2]) + "m, equals to ({},{}m) and ({},{}m)".format(direction[0],
                                                                                         "0.7*" + str(distances[
                                                                                             cnt2]) + '=' + str(
                                                                                             distance), direction[1],
@@ -168,6 +167,12 @@ def angle2dir_4(angle):
         return Direction[3]
 
 
+def get_landuse_dict():
+    landuse_dict = {
+            "E3":"OtherNon-construction", "R":"Residential", "S4":"TrafficStation&Park", "A4":"Sports", "B31":"Entertainment",  "U9":"OtherPublicFacilities", "A3":"Education","G1":"Park&GreenLand","B":"CommercialService&IndustryFacilities","B32":"Resort&Fitness","B13":"Restaurant&Bar","A9":"ReligiousFacilities","A5":"Hospital"
+            }
+
+    return landuse_dict
 
 def extract_choice(gen, choice_list):
     # answer is A | choice is A | choose A
@@ -199,7 +204,10 @@ def extract_choice(gen, choice_list):
 def get_chat_completion(session, model_name, max_tokens=1200, temperature=0, infer_server=None):
     client = get_llm_model_client(model_name, infer_server)
     # 统一--传进来的是model_name
-    model_name = LLM_MODEL_MAPPING[model_name]
+    try:
+        model_name = LLM_MODEL_MAPPING[model_name]
+    except:
+        model_name, port = model_name.split(":")
     MAX_RETRIES = 3
     WAIT_TIME = 1
     for i in range(MAX_RETRIES):
@@ -259,11 +267,11 @@ def get_llm_model_client(model_name, infer_server=None):
 def load_map(city_map, cache_dir, routing_path, port):
     m = Map(
             mongo_uri=f"{MONGODB_URI}",
-            mongo_db="llmsim",
+            mongo_db="srt",
             mongo_coll=city_map,
             cache_dir=cache_dir,
         )
-    route_command = f"{routing_path} -mongo_uri {MONGODB_URI} -map llmsim.{city_map} -cache {cache_dir} -listen localhost:{port}"
+    route_command = f"{routing_path} -mongo_uri {MONGODB_URI} -map srt.{city_map} -cache {cache_dir} -listen localhost:{port}"
     cmd = route_command.split(" ")
     print("loading routing service")
     process = subprocess.Popen(args=cmd, cwd="./")

@@ -13,17 +13,14 @@ from openai import OpenAI
 DATA_VERSION = "v10"
 
 
-
+from serving.llm_api import get_llm_model_client
+from config import LLM_MODEL_MAPPING
 
 def api_llama3(prompt, max_retries=3, retry_delay=2):
-# 调用llama3
-    model_name = "LLama3-70B-AWQ-4bit"
-    api_base = "xxx"
-
-    client = OpenAI(
-        base_url="xxx",
-        api_key="xxx",
-    )
+    # 调用llama3
+    model_name = "LLama3-70B"
+    client = get_llm_model_client(model_name, infer_server="Siliconflow")
+    model_name = LLM_MODEL_MAPPING[model_name]
 
     attempt = 0
     while attempt < max_retries:
@@ -149,7 +146,7 @@ def process_stepgame(base_path, folder_name, output_file_path, max_samples, star
     with tqdm(total=10, desc=f"Processing {task_name}", unit='file') as pbar:
         for i in range(1, 11):
             json_file_path = os.path.join(base_path, folder_name, f"qa{i}_train.json")
-            txt_file_path = os.path.join("/your_path/SpatialLM-StepGame/prompts/separate", f"Our_CoT_5shot_clean{i}.txt")
+            txt_file_path = os.path.join("/data1/liutianhui/CityWorldModel-main/resource/SpatialLM-StepGame/prompts/separate", f"Our_CoT_5shot_clean{i}.txt")
 
             with open(txt_file_path, 'r', encoding='utf-8') as txt_file:
                 prompt = txt_file.read().strip()
@@ -346,7 +343,7 @@ def main(args):
     
 
     # 数据集存储地址
-    base_path = "/your_path/spatial"
+    base_path = "/data1/citygpt/datasets/city_world_model/spatial"
     
 
     # SPARTQA数据集的对话构造
@@ -378,9 +375,9 @@ if __name__ == "__main__":
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--reasoning_file", default="./logs/additional_llama3-wudaokou_small-mock-v9-data.jsonl")
-    parser.add_argument("--score_file", default="./logs/additional_llama3-wudaokou_small-mock-v9-answer.jsonl")
-    parser.add_argument("--output_file", default="./examples/additional-wudaokou_small-mock-v9.jsonl")
+    parser.add_argument("--reasoning_file", default="simulate/logs/additional_llama3-wudaokou_small-mock-v9-data.jsonl")
+    parser.add_argument("--score_file", default="simulate/logs/additional_llama3-wudaokou_small-mock-v9-answer.jsonl")
+    parser.add_argument("--output_file", default="simulate/examples/additional-wudaokou_small-mock-v9.jsonl")
     parser.add_argument("--data_version", type=str, default=DATA_VERSION)
     args = parser.parse_args()
     main(args)

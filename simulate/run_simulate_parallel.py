@@ -91,7 +91,7 @@ with jsonlines.open(args.output_file, "w") as wid:
 # 后处理代码
 subprocess.run(["python", "-m", "simulate.process", "--log_file", OUTPUT_FILE, "--sft_file", SFT_FILE])
 
-common_path = "/data1/citygpt/datasets/city_world_model" # 下面有citywalk，merge，general，cache四个路径
+common_path = "/data1/citygpt/datasets" # 下面有citywalk，merge，general，cache四个路径
 os.popen("cp {} {}".format(SFT_FILE, os.path.join(common_path, "citywalk")))
 
 # 删除临时文件

@@ -164,36 +164,17 @@ all_pois.csv
 routing/
 logs/
 demo/examples/
-citywalk-wudaokou-mock-train-success.jsonl
 tasks/city/eval_*.csv
 resource/all_aois.csv
 examples/city_image*
 examples/archive
-examples/citywalk*
-examples/city_eval_summary*
-examples/0215
-examples/0216
 tasks/city/wudaokou/citywalk_train*
 archive
-evaluate/opencompass-0.2.1/data
-evaluate/opencompass-0.2.4/data
-evaluate/opencompass-0.2.1/outputs/
-evaluate/opencompass-0.2.1/tmp/
-evaluate/opencompass-0.2.4/outputs/
-evaluate/opencompass-0.2.4/tmp/
-evaluate/opencompass-0.2.4/.github/
 demo/
 simulate/examples/cache/
 simulate/logs/*
-evaluate/city_eval/examples/cache/
-
-# macbook comes with
+evaluate/city_eval/*
 .DS_Store
-evaluate/city_eval/results/
-simulate/examples/citywalk-wudaokou_small-mock-v0325.jsonl
-simulate/tasks/input_citywalk_wangjing-v0325.jsonl
-evaluate/agent/examples/cache/
-
 EXP_ORIG_DATA
 temp
 checkin_split
@@ -201,4 +182,6 @@ checkin_test_pk
 output/
 log/
 train/data/citygpt*
+resource/*
+simulate/examples/*
 
