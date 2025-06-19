@@ -228,7 +228,7 @@ If you find this work helpful, please cite our paper.
 ```latex
 @inproceedings{feng2025citygpt,
 title={CityGPT: Empowering Urban Spatial Cognition of Large Language Models},
-author={Jie Feng, Tianhui Liu, Yuwei Du, Siqi Guo, Yuming Lin, and Yong Li},
+author={Feng, Jie and Liu, Tianhui and Du, Yuwei and Guo, Siqi and Lin, Yuming and Li, Yong},
 booktitle = {Proceedings of the 31th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining},
 year = {2025}
 }
