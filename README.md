@@ -5,7 +5,7 @@ This repo is for CityGPT: Empowering Urban Spatial Cognition of Large Language M
 ## 📢 News
 
 - 🎉: (2025.05) CityGPT has been accepted to **KDD 2025 Research Track**.
-- 🎉: (2025.06) The next-generation urban foundation model based on CityGPT, [UrbanLLaVA](https://github.com/tsinghua-fib-lab/UrbanLLaVA), which introduces multi-modal capabilities, has been accepted to **ICCV 2025**.
+- 🎉: (2025.06) The next-generation urban foundation model based on CityGPT, named [UrbanLLaVA](https://github.com/tsinghua-fib-lab/UrbanLLaVA), which introduces multi-modal capabilities, has been accepted to **ICCV 2025**.
 
 ## Introduction
 
